@@ -1,7 +1,7 @@
 use indicatif::ProgressStyle;
 use owo_colors::OwoColorize;
 use serde::Serialize;
-use std::{cell::RefCell, io::BufRead, sync::mpsc};
+use std::{cell::RefCell, io::BufRead, sync::mpsc, task::Context};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -112,12 +112,34 @@ impl MultiProgressBar {
         self.progress.set_length(total);
     }
 
+    pub fn set_prefix(&mut self, message: &str) {
+        self.progress.set_prefix(message.to_owned());
+    }
+
     pub fn set_message(&mut self, message: &str) {
         self.progress.set_message(message.to_owned());
     }
 
     pub fn increment(&mut self, count: u64) {
         self.progress.inc(count);
+    }
+
+    pub fn start_process(
+        &mut self,
+        command: &str,
+        options: &ExecuteOptions,
+    ) -> anyhow::Result<std::process::Child> {
+        let args = options.arguments.join(" ");
+        let full_command = format!("{command} {args}");
+
+        if let Some(directory) = &options.working_directory {
+            if !std::path::Path::new(&directory).exists() {
+                return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
+            }
+        }
+
+        let child_process = options.spawn(command)?;
+        Ok(child_process)
     }
 }
 
@@ -145,11 +167,7 @@ impl<'a, Context> MultiProgress<'a, Context> {
         }
     }
 
-    pub fn add_progress(
-        &mut self,
-        name: &str,
-        total: Option<u64>,
-    ) -> MultiProgressBar {
+    pub fn add_progress(&mut self, name: &str, total: Option<u64>) -> MultiProgressBar {
         let bar = ProgressBar::new_multiprogress(total, self.printer.indent())
             .expect("Internal Error: Failed to create progress bar");
         let progress = self.multi_progress.add(bar.progress);
@@ -250,6 +268,7 @@ impl<Context> Drop for Heading<'_, Context> {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
 pub struct ExecuteOptions {
     pub label: String,
     pub working_directory: Option<String>,
@@ -308,6 +327,88 @@ impl ExecuteOptions {
             .spawn()?;
 
         Ok(result)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecuteLater {
+    pub command: String,
+    pub options: ExecuteOptions,
+}
+
+impl ExecuteLater {
+    pub fn new(command: &str, options: ExecuteOptions) -> Self {
+        Self {
+            command: command.to_string(),
+            options,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{} {}", self.command, self.options.arguments.join(" "))
+    }
+}
+
+pub struct ExecuteBatch {
+    commands: Vec<(String, Vec<ExecuteLater>)>,
+}
+
+impl ExecuteBatch {
+    pub fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, key: &str, options: Vec<ExecuteLater>) {
+        for (name, execute_later) in self.commands.iter_mut() {
+            if name == key {
+                execute_later.extend(options);
+                return;
+            }
+        }
+
+        self.commands.push((key.to_string(), options));
+    }
+
+    /// Consumes the batch
+    pub fn execute<'a, Context>(
+        &mut self,
+        printer: &'a mut Printer<Context>,
+    ) -> anyhow::Result<()> {
+        let section = Section::new(printer, &"Batch")?;
+
+        let mut multi_progress = MultiProgress::new(section.printer);
+        let mut handles = Vec::new();
+
+        for (key, self_execute_later) in &self.commands {
+            let mut progress = multi_progress.add_progress(key, None);
+            progress.set_prefix(key);
+            let mut execute_later = Vec::new();
+            for execute in self_execute_later {
+                execute_later.push(execute.clone());
+            }
+
+            let handle = std::thread::spawn(move || {
+                for execute in execute_later {
+                    progress.set_message(execute.to_string().as_str());
+
+                    let child_process =
+                        progress.start_process(execute.command.as_str(), &execute.options).expect("failed to start process");
+                    let _ = monitor_process(child_process, &mut progress);
+                }
+                ()
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().expect("Failed to join thread");
+        }
+
+        self.commands = Vec::new();
+        Ok(())
     }
 }
 
@@ -512,94 +613,94 @@ impl<Context> Printer<Context> {
         Ok(child_process)
     }
 
-    pub fn monitor_process(
-        mut child_process: std::process::Child,
-        progress_bar: &mut MultiProgressBar,
-    ) -> anyhow::Result<()> {
-
-        let child_stdout = child_process
-            .stdout
-            .take()
-            .ok_or(anyhow::anyhow!("Internal Error: Child has no stdout"))?;
-
-        let child_stderr = child_process
-            .stderr
-            .take()
-            .ok_or(anyhow::anyhow!("Internal Error: Child has no stderr"))?;
-
-        let (stdout_thread, stdout_rx) = ExecuteOptions::process_child_output(child_stdout)?;
-        let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
-
-        let handle_stdout =
-            |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
-                while let Ok(message) = stdout_rx.try_recv() {
-                    content.push_str(message.as_str());
-                    progress.set_message(message.as_str());
-                }
-                Ok(())
-            };
-
-        let handle_stderr =
-            |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
-                while let Ok(message) = stderr_rx.try_recv() {
-                    content.push_str(message.as_str());
-                    progress.set_message(message.as_str());
-                }
-                Ok(())
-            };
-
-        let exit_status;
-
-        let mut stdout_content = String::new();
-        let mut stderr_content = String::new();
-
-        {
-            loop {
-                if let Ok(status) = child_process.try_wait() {
-                    if let Some(status) = status {
-                        exit_status = Some(status);
-                        break;
-                    }
-                }
-
-                handle_stdout(progress_bar, &mut stdout_content)?;
-                handle_stderr(progress_bar, &mut stderr_content)?;
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                progress_bar.increment(1);
-            }
-        }
-
-        let _ = stdout_thread.join();
-        let _ = stderr_thread.join();
-
-        if let Some(exit_status) = exit_status {
-            if !exit_status.success() {
-                if let Some(code) = exit_status.code() {
-                    let exit_message = format!("Command failed with exit code: {code}");
-                    return Err(anyhow::anyhow!("{exit_message}"));
-                } else {
-                    return Err(anyhow::anyhow!("Command failed with unknown exit code"));
-                }
-            }
-        }
-
-        Ok(())
-    }
+    
 
     pub fn execute_process(
         &mut self,
         command: &str,
         options: &ExecuteOptions,
     ) -> anyhow::Result<()> {
-
         let section = Section::new(self, command)?;
         let child_process = section.printer.start_process(command, options)?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None);
-        Self::monitor_process(child_process, &mut progress_bar)?;
+        monitor_process(child_process, &mut progress_bar)?;
 
         Ok(())
     }
+}
+
+fn monitor_process(
+    mut child_process: std::process::Child,
+    progress_bar: &mut MultiProgressBar,
+) -> anyhow::Result<()> {
+    let child_stdout = child_process
+        .stdout
+        .take()
+        .ok_or(anyhow::anyhow!("Internal Error: Child has no stdout"))?;
+
+    let child_stderr = child_process
+        .stderr
+        .take()
+        .ok_or(anyhow::anyhow!("Internal Error: Child has no stderr"))?;
+
+    let (stdout_thread, stdout_rx) = ExecuteOptions::process_child_output(child_stdout)?;
+    let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
+
+    let handle_stdout =
+        |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
+            while let Ok(message) = stdout_rx.try_recv() {
+                content.push_str(message.as_str());
+                progress.set_message(message.as_str());
+            }
+            Ok(())
+        };
+
+    let handle_stderr =
+        |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
+            while let Ok(message) = stderr_rx.try_recv() {
+                content.push_str(message.as_str());
+                progress.set_message(message.as_str());
+            }
+            Ok(())
+        };
+
+    let exit_status;
+
+    let mut stdout_content = String::new();
+    let mut stderr_content = String::new();
+
+    {
+        loop {
+            if let Ok(status) = child_process.try_wait() {
+                if let Some(status) = status {
+                    exit_status = Some(status);
+                    break;
+                }
+            }
+
+            handle_stdout(progress_bar, &mut stdout_content)?;
+            handle_stderr(progress_bar, &mut stderr_content)?;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            progress_bar.increment(1);
+        }
+    }
+
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+
+    if let Some(exit_status) = exit_status {
+        if !exit_status.success() {
+            if let Some(code) = exit_status.code() {
+                let exit_message = format!("Command failed with exit code: {code}");
+                return Err(anyhow::anyhow!("{exit_message}"));
+            } else {
+                return Err(anyhow::anyhow!("Command failed with unknown exit code"));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -686,22 +787,23 @@ mod tests {
                     }
                 });
 
-                let second_handle = multi_progress.printer.runtime.spawn(async move {
+                let second_handle = std::thread::spawn(move || {
                     for index in 0..50 {
                         second.increment(1);
                         if index == 25 {
                             second.set_message("half way");
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 });
 
-                for index in 0..100 {
+                for _ in 0..100 {
                     third.increment(1);
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
 
                 first_handle.join().unwrap();
+                second_handle.join().unwrap();
             }
 
             {
