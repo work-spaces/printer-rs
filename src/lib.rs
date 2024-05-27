@@ -1,7 +1,7 @@
 use indicatif::ProgressStyle;
 use owo_colors::OwoColorize;
 use serde::Serialize;
-use std::{cell::RefCell, io::BufRead, sync::mpsc, task::Context};
+use std::{cell::RefCell, io::BufRead, sync::mpsc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -129,8 +129,6 @@ impl MultiProgressBar {
         command: &str,
         options: &ExecuteOptions,
     ) -> anyhow::Result<std::process::Child> {
-        let args = options.arguments.join(" ");
-        let full_command = format!("{command} {args}");
 
         if let Some(directory) = &options.working_directory {
             if !std::path::Path::new(&directory).exists() {
