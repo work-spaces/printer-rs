@@ -1,7 +1,7 @@
 use indicatif::ProgressStyle;
 use owo_colors::OwoColorize;
 use serde::Serialize;
-use std::{cell::RefCell, io::BufRead, sync::mpsc};
+use std::{io::BufRead, sync::mpsc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -16,16 +16,15 @@ pub enum Level {
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
 
-pub struct Section<'a, Context> {
-    pub printer: &'a mut Printer<Context>,
+pub struct Section<'a> {
+    pub printer: &'a mut Printer,
 }
 
-impl<'a, Context> Section<'a, Context> {
-    pub fn new(printer: &'a mut Printer<Context>, name: &str) -> anyhow::Result<Self> {
+impl<'a> Section<'a> {
+    pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
         {
-            let mut key_writer = printer.writer.borrow_mut();
             writeln!(
-                *key_writer,
+                printer.writer,
                 "{}{}:",
                 " ".repeat(printer.indent()),
                 name.bold()
@@ -36,7 +35,7 @@ impl<'a, Context> Section<'a, Context> {
     }
 }
 
-impl<Context> Drop for Section<'_, Context> {
+impl Drop for Section<'_> {
     fn drop(&mut self) {
         self.printer.shift_left();
     }
@@ -98,6 +97,7 @@ impl ProgressBar {
 pub struct MultiProgressBar {
     progress: indicatif::ProgressBar,
     ending_message: Option<String>,
+    hold: std::time::Duration,
 }
 
 impl MultiProgressBar {
@@ -105,6 +105,7 @@ impl MultiProgressBar {
         Self {
             progress,
             ending_message,
+            hold: std::time::Duration::from_millis(500)
         }
     }
 
@@ -120,6 +121,14 @@ impl MultiProgressBar {
         self.progress.set_message(message.to_owned());
     }
 
+    pub fn set_ending_message(&mut self, message: &str) {
+        self.ending_message = Some(message.to_owned());
+    }
+
+    pub fn set_finish(&mut self, message: Option<&str>) {
+        self.ending_message = message.map(|e| e.to_string());
+    }
+
     pub fn increment(&mut self, count: u64) {
         self.progress.inc(count);
     }
@@ -129,7 +138,6 @@ impl MultiProgressBar {
         command: &str,
         options: &ExecuteOptions,
     ) -> anyhow::Result<std::process::Child> {
-
         if let Some(directory) = &options.working_directory {
             if !std::path::Path::new(&directory).exists() {
                 return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
@@ -139,6 +147,18 @@ impl MultiProgressBar {
         let child_process = options.spawn(command)?;
         Ok(child_process)
     }
+
+    pub fn execute_process(
+        &mut self,
+        command: &str,
+        options: &ExecuteOptions,
+    ) -> anyhow::Result<()> {
+        self.set_message(&options.get_full_command(command));
+        let child_process = self.start_process(command, options)?;
+        monitor_process(child_process, self)?;
+        std::thread::sleep(self.hold);
+        Ok(())
+    }
 }
 
 impl Drop for MultiProgressBar {
@@ -146,34 +166,32 @@ impl Drop for MultiProgressBar {
         if let Some(message) = &self.ending_message {
             self.progress
                 .finish_with_message(message.bold().to_string());
-        } else {
-            self.progress.finish_with_message("".to_string());
         }
     }
 }
 
-pub struct MultiProgress<'a, Context> {
-    pub printer: &'a mut Printer<Context>,
+pub struct MultiProgress<'a> {
+    pub printer: &'a mut Printer,
     multi_progress: indicatif::MultiProgress,
 }
 
-impl<'a, Context> MultiProgress<'a, Context> {
-    pub fn new(printer: &'a mut Printer<Context>) -> Self {
+impl<'a> MultiProgress<'a> {
+    pub fn new(printer: &'a mut Printer) -> Self {
         Self {
             printer,
             multi_progress: indicatif::MultiProgress::new(),
         }
     }
 
-    pub fn add_progress(&mut self, name: &str, total: Option<u64>) -> MultiProgressBar {
+    pub fn add_progress(
+        &mut self,
+        name: &str,
+        total: Option<u64>,
+        finish_message: Option<&str>,
+    ) -> MultiProgressBar {
         let bar = ProgressBar::new_multiprogress(total, self.printer.indent())
             .expect("Internal Error: Failed to create progress bar");
         let progress = self.multi_progress.add(bar.progress);
-        let ending_message = if total.is_none() {
-            Some("Done!".to_string())
-        } else {
-            None
-        };
 
         let prefix = format!("{name}:");
         progress.set_prefix(
@@ -181,22 +199,18 @@ impl<'a, Context> MultiProgress<'a, Context> {
                 .bold()
                 .to_string(),
         );
-        MultiProgressBar::new(progress, ending_message)
+        MultiProgressBar::new(progress, finish_message.map(|e| e.to_string()))
     }
 }
 
-pub struct Progress<'a, Context> {
-    pub printer: &'a mut Printer<Context>,
+pub struct Progress<'a> {
+    pub printer: &'a mut Printer,
     pub progress_bar: ProgressBar,
     ending_message: Option<String>,
 }
 
-impl<'a, Context> Progress<'a, Context> {
-    pub fn new(
-        printer: &'a mut Printer<Context>,
-        name: &str,
-        total: Option<u64>,
-    ) -> anyhow::Result<Self> {
+impl<'a> Progress<'a> {
+    pub fn new(printer: &'a mut Printer, name: &str, total: Option<u64>) -> anyhow::Result<Self> {
         let ending_message = if total.is_none() {
             Some("Done!".to_string())
         } else {
@@ -221,7 +235,7 @@ impl<'a, Context> Progress<'a, Context> {
     }
 }
 
-impl<'a, Context> Drop for Progress<'a, Context> {
+impl<'a> Drop for Progress<'a> {
     fn drop(&mut self) {
         if let Some(message) = &self.ending_message {
             self.progress_bar
@@ -233,16 +247,15 @@ impl<'a, Context> Drop for Progress<'a, Context> {
     }
 }
 
-pub struct Heading<'a, Context> {
-    pub printer: &'a mut Printer<Context>,
+pub struct Heading<'a> {
+    pub printer: &'a mut Printer,
 }
 
-impl<'a, Context> Heading<'a, Context> {
-    pub fn new(printer: &'a mut Printer<Context>, name: &str) -> anyhow::Result<Self> {
+impl<'a> Heading<'a> {
+    pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
         printer.newline()?;
         printer.enter_heading();
         {
-            let mut key_writer = printer.writer.borrow_mut();
             let heading = if printer.heading_count == 1 {
                 format!("{} {name}", "#".repeat(printer.heading_count))
                     .yellow()
@@ -253,14 +266,14 @@ impl<'a, Context> Heading<'a, Context> {
                     .bold()
                     .to_string()
             };
-            writeln!(*key_writer, "{heading}")?;
-            writeln!(*key_writer)?;
+            writeln!(printer.writer, "{heading}")?;
+            writeln!(printer.writer)?;
         }
         Ok(Self { printer })
     }
 }
 
-impl<Context> Drop for Heading<'_, Context> {
+impl Drop for Heading<'_> {
     fn drop(&mut self) {
         self.printer.exit_heading();
     }
@@ -326,6 +339,22 @@ impl ExecuteOptions {
 
         Ok(result)
     }
+
+    pub fn get_full_command(&self, command: &str) -> String {
+        format!("{command} {}", self.arguments.join(" "))
+    }
+
+    pub fn get_full_command_in_working_directory(&self, command: &str) -> String {
+        format!(
+            "{} {command} {}",
+            if let Some(directory) = &self.working_directory {
+                directory
+            } else {
+                ""
+            },
+            self.arguments.join(" "),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -370,17 +399,14 @@ impl ExecuteBatch {
     }
 
     /// Consumes the batch
-    pub fn execute<'a, Context>(
-        &mut self,
-        printer: &'a mut Printer<Context>,
-    ) -> anyhow::Result<()> {
+    pub fn execute<'a>(&mut self, printer: &'a mut Printer) -> anyhow::Result<()> {
         let section = Section::new(printer, &"Batch")?;
 
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut handles = Vec::new();
 
         for (key, self_execute_later) in &self.commands {
-            let mut progress = multi_progress.add_progress(key, None);
+            let mut progress = multi_progress.add_progress(key, None, None);
             progress.set_prefix(key);
             let mut execute_later = Vec::new();
             for execute in self_execute_later {
@@ -391,8 +417,9 @@ impl ExecuteBatch {
                 for execute in execute_later {
                     progress.set_message(execute.to_string().as_str());
 
-                    let child_process =
-                        progress.start_process(execute.command.as_str(), &execute.options).expect("failed to start process");
+                    let child_process = progress
+                        .start_process(execute.command.as_str(), &execute.options)
+                        .expect("failed to start process");
                     let _ = monitor_process(child_process, &mut progress);
                 }
                 ()
@@ -413,38 +440,25 @@ impl ExecuteBatch {
 trait PrinterTrait: std::io::Write + indicatif::TermLike {}
 impl<W: std::io::Write + indicatif::TermLike> PrinterTrait for W {}
 
-pub struct Printer<Context> {
-    pub is_dry_run: bool,
+pub struct Printer {
     pub level: Level,
-    indent: RefCell<usize>,
+    indent: usize,
     heading_count: usize,
-    writer: RefCell<Box<dyn PrinterTrait>>,
-    context: Context,
+    writer: Box<dyn PrinterTrait>,
 }
 
-impl<Context> Printer<Context> {
-    pub fn new_stdout(context: Context) -> Self {
+impl Printer {
+    pub fn new_stdout() -> Self {
         Self {
-            indent: RefCell::new(0),
+            indent: 0,
             level: Level::Info,
             heading_count: 0,
-            writer: RefCell::new(Box::new(console::Term::stdout())),
-            context,
-            is_dry_run: false,
+            writer: Box::new(console::Term::stdout()),
         }
     }
 
-    pub fn context(&self) -> &Context {
-        &self.context
-    }
-
-    pub fn context_mut(&mut self) -> &mut Context {
-        &mut self.context
-    }
-
     pub fn newline(&mut self) -> anyhow::Result<()> {
-        let mut key_writer = self.writer.borrow_mut();
-        writeln!(*key_writer, " ")?;
+        writeln!(self.writer, " ")?;
         Ok(())
     }
 
@@ -491,12 +505,9 @@ impl<Context> Printer<Context> {
     }
 
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
-        let mut key_writer = self.writer.borrow_mut();
-
-        writeln!(*key_writer, "```{name}")?;
-        write!(*key_writer, "{}", content)?;
-        writeln!(*key_writer, "```")?;
-
+        writeln!(self.writer, "```{name}")?;
+        write!(self.writer, "{}", content)?;
+        writeln!(self.writer, "```")?;
         Ok(())
     }
 
@@ -508,9 +519,8 @@ impl<Context> Printer<Context> {
         }
 
         {
-            let mut key_writer = self.writer.borrow_mut();
             write!(
-                *key_writer,
+                self.writer,
                 "{}{}: ",
                 " ".repeat(self.indent()),
                 name.bold()
@@ -522,7 +532,7 @@ impl<Context> Printer<Context> {
     }
 
     fn indent(&self) -> usize {
-        *self.indent.borrow()
+        self.indent
     }
 
     fn enter_heading(&mut self) {
@@ -533,25 +543,24 @@ impl<Context> Printer<Context> {
         self.heading_count -= 1;
     }
 
-    fn shift_right(&self) {
-        *self.indent.borrow_mut() += 2;
+    fn shift_right(&mut self) {
+        self.indent += 2;
     }
 
-    fn shift_left(&self) {
-        *self.indent.borrow_mut() -= 2;
+    fn shift_left(&mut self) {
+        self.indent -= 2;
     }
 
-    fn print_value(&self, value: &serde_json::Value) -> anyhow::Result<()> {
+    fn print_value(&mut self, value: &serde_json::Value) -> anyhow::Result<()> {
         match value {
             serde_json::Value::Object(map) => {
-                writeln!(self.writer.borrow_mut())?;
+                writeln!(self.writer)?;
                 self.shift_right();
                 for (key, value) in map {
                     let is_skip = *value == serde_json::Value::Null && self.level > Level::Message;
                     if !is_skip {
                         {
-                            let mut key_writer = self.writer.borrow_mut();
-                            write!(*key_writer, "{}{}: ", " ".repeat(self.indent()), key.bold())?;
+                            write!(self.writer, "{}{}: ", " ".repeat(self.indent()), key.bold())?;
                         }
                         self.print_value(value)?;
                     }
@@ -559,32 +568,27 @@ impl<Context> Printer<Context> {
                 self.shift_left();
             }
             serde_json::Value::Array(array) => {
-                writeln!(self.writer.borrow_mut())?;
+                writeln!(self.writer)?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
                     {
-                        let mut key_writer = self.writer.borrow_mut();
-                        write!(*key_writer, "{}[{index}]: ", " ".repeat(self.indent()))?;
+                        write!(self.writer, "{}[{index}]: ", " ".repeat(self.indent()))?;
                     }
                     self.print_value(value)?;
                 }
                 self.shift_left();
             }
             serde_json::Value::Null => {
-                let mut key_writer = self.writer.borrow_mut();
-                writeln!(*key_writer, "null")?;
+                writeln!(self.writer, "null")?;
             }
             serde_json::Value::Bool(value) => {
-                let mut key_writer = self.writer.borrow_mut();
-                writeln!(*key_writer, "{value}")?;
+                writeln!(self.writer, "{value}")?;
             }
             serde_json::Value::Number(value) => {
-                let mut key_writer = self.writer.borrow_mut();
-                writeln!(*key_writer, "{value}")?;
+                writeln!(self.writer, "{value}")?;
             }
             serde_json::Value::String(value) => {
-                let mut key_writer = self.writer.borrow_mut();
-                writeln!(*key_writer, "{value}")?;
+                writeln!(self.writer, "{value}")?;
             }
         }
 
@@ -602,7 +606,7 @@ impl<Context> Printer<Context> {
         self.info("execute", &full_command)?;
         if let Some(directory) = &options.working_directory {
             self.info("directory", &directory)?;
-            if !self.is_dry_run && !std::path::Path::new(&directory).exists() {
+            if !std::path::Path::new(&directory).exists() {
                 return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
             }
         }
@@ -610,8 +614,6 @@ impl<Context> Printer<Context> {
         let child_process = options.spawn(command)?;
         Ok(child_process)
     }
-
-    
 
     pub fn execute_process(
         &mut self,
@@ -621,7 +623,7 @@ impl<Context> Printer<Context> {
         let section = Section::new(self, command)?;
         let child_process = section.printer.start_process(command, options)?;
         let mut multi_progress = MultiProgress::new(section.printer);
-        let mut progress_bar = multi_progress.add_progress("progress", None);
+        let mut progress_bar = multi_progress.add_progress("progress", None, None);
         monitor_process(child_process, &mut progress_bar)?;
 
         Ok(())
@@ -716,7 +718,7 @@ mod tests {
 
     #[test]
     fn printer() {
-        let mut printer: Printer<()> = Printer::new_stdout(());
+        let mut printer = Printer::new_stdout();
         let mut options = ExecuteOptions::default();
         options.arguments.push("-alt".to_string());
 
@@ -776,6 +778,7 @@ mod tests {
                 let mut third = multi_progress.add_progress("Third", Some(100));
 
                 let first_handle = std::thread::spawn(move || {
+                    first.set_ending_message("Done!");
                     for index in 0..10 {
                         first.increment(1);
                         if index == 5 {
@@ -812,6 +815,69 @@ mod tests {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     spinner.increment(1);
                 }
+            }
+        }
+
+        {
+            let runtime =
+                tokio::runtime::Runtime::new().expect("Internal Error: Failed to create runtime");
+
+            let heading = Heading::new(&mut printer, "Async").unwrap();
+
+            let mut multi_progress = MultiProgress::new(heading.printer);
+
+            let mut handles = Vec::new();
+
+            let task1_progress = multi_progress.add_progress("Task1", Some(30));
+            let task2_progress = multi_progress.add_progress("Task2", Some(30));
+            let task1 = async move {
+                let mut progress = task1_progress;
+                progress.set_message("Task1a");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+
+                progress.set_message("Task1b");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+
+                progress.set_message("Task1c");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+                ()
+            };
+            handles.push(runtime.spawn(task1));
+
+            let task2 = async move {
+                let mut progress = task2_progress;
+                progress.set_message("Task2a");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+
+                progress.set_message("Task2b");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+
+                progress.set_message("Task2c");
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    progress.increment(1);
+                }
+                ()
+            };
+            handles.push(runtime.spawn(task2));
+
+            for handle in handles {
+                runtime.block_on(handle).unwrap();
             }
         }
     }
