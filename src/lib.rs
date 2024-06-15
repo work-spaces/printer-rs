@@ -16,6 +16,21 @@ pub enum Level {
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
 
+fn check_executable(command: &str) -> anyhow::Result<()> {
+    if command.starts_with("/") || command.starts_with("./") {
+        let path = std::path::Path::new(command);
+        if !path.exists() {
+            return Err(anyhow::anyhow!("Command does not exist: {command}"));
+        }
+        return Ok(());
+    }
+
+    let _ = which::which(command)
+        .map_err(|e| anyhow::anyhow!("{command} is not found in PATH: {e}"))?;
+
+    Ok(())
+}
+
 pub struct Section<'a> {
     pub printer: &'a mut Printer,
 }
@@ -105,7 +120,7 @@ impl MultiProgressBar {
         Self {
             progress,
             ending_message,
-            hold: std::time::Duration::from_millis(500)
+            hold: std::time::Duration::from_millis(500),
         }
     }
 
@@ -138,6 +153,8 @@ impl MultiProgressBar {
         command: &str,
         options: &ExecuteOptions,
     ) -> anyhow::Result<std::process::Child> {
+        check_executable(command)?;
+
         if let Some(directory) = &options.working_directory {
             if !std::path::Path::new(&directory).exists() {
                 return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
@@ -600,6 +617,8 @@ impl Printer {
         command: &str,
         options: &ExecuteOptions,
     ) -> anyhow::Result<std::process::Child> {
+        check_executable(command)?;
+
         let args = options.arguments.join(" ");
         let full_command = format!("{command} {args}");
 
@@ -623,7 +642,7 @@ impl Printer {
         let section = Section::new(self, command)?;
         let child_process = section.printer.start_process(command, options)?;
         let mut multi_progress = MultiProgress::new(section.printer);
-        let mut progress_bar = multi_progress.add_progress("progress", None, None);
+        let mut progress_bar = multi_progress.add_progress("progress", None, Some("Done!"));
         monitor_process(child_process, &mut progress_bar)?;
 
         Ok(())
@@ -651,6 +670,7 @@ fn monitor_process(
         |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
             while let Ok(message) = stdout_rx.try_recv() {
                 content.push_str(message.as_str());
+                content.push_str("\n");
                 progress.set_message(message.as_str());
             }
             Ok(())
@@ -660,6 +680,7 @@ fn monitor_process(
         |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
             while let Ok(message) = stderr_rx.try_recv() {
                 content.push_str(message.as_str());
+                content.push_str("\n");
                 progress.set_message(message.as_str());
             }
             Ok(())
@@ -689,13 +710,16 @@ fn monitor_process(
     let _ = stdout_thread.join();
     let _ = stderr_thread.join();
 
+    handle_stdout(progress_bar, &mut stdout_content)?;
+    handle_stderr(progress_bar, &mut stderr_content)?;
+
     if let Some(exit_status) = exit_status {
         if !exit_status.success() {
             if let Some(code) = exit_status.code() {
-                let exit_message = format!("Command failed with exit code: {code}");
+                let exit_message = format!("Command failed with exit code: {code}\nstdout: {stdout_content}\nstderr: {stderr_content}");
                 return Err(anyhow::anyhow!("{exit_message}"));
             } else {
-                return Err(anyhow::anyhow!("Command failed with unknown exit code"));
+                return Err(anyhow::anyhow!("Command failed with unknown exit code\nstdout: {stdout_content}\nstderr: {stderr_content}"));
             }
         }
     }
@@ -773,9 +797,9 @@ mod tests {
 
             {
                 let mut multi_progress = MultiProgress::new(&mut sub_section.printer);
-                let mut first = multi_progress.add_progress("First", Some(10));
-                let mut second = multi_progress.add_progress("Second", Some(50));
-                let mut third = multi_progress.add_progress("Third", Some(100));
+                let mut first = multi_progress.add_progress("First", Some(10), None);
+                let mut second = multi_progress.add_progress("Second", Some(50), None);
+                let mut third = multi_progress.add_progress("Third", Some(100), None);
 
                 let first_handle = std::thread::spawn(move || {
                     first.set_ending_message("Done!");
@@ -828,8 +852,8 @@ mod tests {
 
             let mut handles = Vec::new();
 
-            let task1_progress = multi_progress.add_progress("Task1", Some(30));
-            let task2_progress = multi_progress.add_progress("Task2", Some(30));
+            let task1_progress = multi_progress.add_progress("Task1", Some(30), None);
+            let task2_progress = multi_progress.add_progress("Task2", Some(30), None);
             let task1 = async move {
                 let mut progress = task1_progress;
                 progress.set_message("Task1a");

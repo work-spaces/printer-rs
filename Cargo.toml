@@ -12,6 +12,7 @@ owo-colors = "4.0.0"
 anyhow = "1.0.42"
 indicatif = "0.17.8"
 console = "0.15.8"
+which = "6.0.1"
 
 
 [dev-dependencies]
