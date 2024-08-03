@@ -105,12 +105,21 @@ impl MultiProgressBar {
         Self {
             progress,
             ending_message,
-            hold: std::time::Duration::from_millis(500)
+            hold: std::time::Duration::from_millis(500),
         }
     }
 
+    pub fn total(&self) -> Option<u64> {
+        self.progress.length()
+    }
+
     pub fn set_total(&mut self, total: u64) {
-        self.progress.set_length(total);
+        if let Some(length) = self.progress.length() {
+            if length != total {
+                self.progress.set_length(total);
+                self.progress.set_position(0);
+            }
+        }
     }
 
     pub fn set_prefix(&mut self, message: &str) {
@@ -127,6 +136,15 @@ impl MultiProgressBar {
 
     pub fn set_finish(&mut self, message: Option<&str>) {
         self.ending_message = message.map(|e| e.to_string());
+    }
+
+    pub fn increment_with_overflow(&mut self, count: u64) {
+        self.progress.inc(count);
+        if let Some(total) = self.total() {
+            if self.progress.position() >= total {
+                self.progress.set_position(0);
+            }
+        }
     }
 
     pub fn increment(&mut self, count: u64) {
