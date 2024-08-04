@@ -41,74 +41,12 @@ impl Drop for Section<'_> {
     }
 }
 
-pub struct ProgressBar {
-    progress: indicatif::ProgressBar,
-}
-
-impl ProgressBar {
-    fn new_multiprogress(total: Option<u64>, indent: usize) -> anyhow::Result<Self> {
-        let progress = if let Some(total) = total {
-            let progress = indicatif::ProgressBar::new(total);
-            let template_string = {
-                format!(
-                    "{}{{prefix}} [{{bar:.cyan/blue}}] {{msg}}",
-                    " ".repeat(indent)
-                )
-            };
-            progress.set_style(
-                ProgressStyle::with_template(template_string.as_str())
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
-            progress
-        } else {
-            let progress = indicatif::ProgressBar::new_spinner();
-            let template_string =
-                { format!("{}{{prefix}} {{spinner}} {{msg}}", " ".repeat(indent)) };
-            progress.set_style(ProgressStyle::with_template(template_string.as_str()).unwrap());
-            progress
-        };
-        Ok(Self { progress })
-    }
-
-    pub fn new(name: &str, total: Option<u64>, indent: usize) -> anyhow::Result<Self> {
-        let progress = Self::new_multiprogress(total, indent)?;
-        let prefix = format!("{name}:");
-        progress.progress.set_prefix(
-            format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
-                .bold()
-                .to_string(),
-        );
-
-        Ok(Self {
-            progress: progress.progress,
-        })
-    }
-
-    pub fn set_message(&mut self, message: &str) {
-        self.progress.set_message(message.to_owned());
-    }
-
-    pub fn increment(&mut self, count: u64) {
-        self.progress.inc(count);
-    }
-}
-
 pub struct MultiProgressBar {
     progress: indicatif::ProgressBar,
-    ending_message: Option<String>,
-    hold: std::time::Duration,
+    final_message: Option<String>,
 }
 
 impl MultiProgressBar {
-    fn new(progress: indicatif::ProgressBar, ending_message: Option<String>) -> Self {
-        Self {
-            progress,
-            ending_message,
-            hold: std::time::Duration::from_millis(500),
-        }
-    }
-
     pub fn total(&self) -> Option<u64> {
         self.progress.length()
     }
@@ -131,11 +69,7 @@ impl MultiProgressBar {
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
-        self.ending_message = Some(message.to_owned());
-    }
-
-    pub fn set_finish(&mut self, message: Option<&str>) {
-        self.ending_message = message.map(|e| e.to_string());
+        self.final_message = Some(message.to_owned());
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
@@ -174,14 +108,13 @@ impl MultiProgressBar {
         self.set_message(&options.get_full_command(command));
         let child_process = self.start_process(command, options)?;
         monitor_process(child_process, self)?;
-        std::thread::sleep(self.hold);
         Ok(())
     }
 }
 
 impl Drop for MultiProgressBar {
     fn drop(&mut self) {
-        if let Some(message) = &self.ending_message {
+        if let Some(message) = &self.final_message {
             self.progress
                 .finish_with_message(message.bold().to_string());
         }
@@ -203,64 +136,40 @@ impl<'a> MultiProgress<'a> {
 
     pub fn add_progress(
         &mut self,
-        name: &str,
+        prefix: &str,
         total: Option<u64>,
         finish_message: Option<&str>,
     ) -> MultiProgressBar {
-        let bar = ProgressBar::new_multiprogress(total, self.printer.indent())
-            .expect("Internal Error: Failed to create progress bar");
-        let progress = self.multi_progress.add(bar.progress);
+        let indent = self.printer.indent();
+        let progress = if let Some(total) = total {
+            let progress = indicatif::ProgressBar::new(total);
+            let template_string =
+                { format!("{}{{prefix}} [{{bar:.cyan/blue}}] {{msg}}", " ".repeat(0)) };
+            progress.set_style(
+                ProgressStyle::with_template(template_string.as_str())
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            progress
+        } else {
+            let progress = indicatif::ProgressBar::new_spinner();
+            let template_string =
+                { format!("{}{{prefix}} {{spinner}} {{msg}}", " ".repeat(indent)) };
+            progress.set_style(ProgressStyle::with_template(template_string.as_str()).unwrap());
+            progress
+        };
 
-        let prefix = format!("{name}:");
+        let progress = self.multi_progress.add(progress);
+
+        let prefix = format!("{prefix}:");
         progress.set_prefix(
             format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
                 .bold()
                 .to_string(),
         );
-        MultiProgressBar::new(progress, finish_message.map(|e| e.to_string()))
-    }
-}
-
-pub struct Progress<'a> {
-    pub printer: &'a mut Printer,
-    pub progress_bar: ProgressBar,
-    ending_message: Option<String>,
-}
-
-impl<'a> Progress<'a> {
-    pub fn new(printer: &'a mut Printer, name: &str, total: Option<u64>) -> anyhow::Result<Self> {
-        let ending_message = if total.is_none() {
-            Some("Done!".to_string())
-        } else {
-            None
-        };
-
-        let progress_bar = ProgressBar::new(name, total, printer.indent())?;
-
-        Ok(Self {
-            printer,
-            progress_bar,
-            ending_message,
-        })
-    }
-
-    pub fn set_message(&mut self, message: &str) {
-        self.progress_bar.set_message(message);
-    }
-
-    pub fn increment(&mut self, count: u64) {
-        self.progress_bar.increment(count);
-    }
-}
-
-impl<'a> Drop for Progress<'a> {
-    fn drop(&mut self) {
-        if let Some(message) = &self.ending_message {
-            self.progress_bar
-                .progress
-                .finish_with_message(message.bold().to_string());
-        } else {
-            self.progress_bar.progress.finish();
+        MultiProgressBar {
+            progress,
+            final_message: finish_message.map(|s| s.to_string()),
         }
     }
 }
@@ -780,20 +689,10 @@ mod tests {
             sub_section.printer.object("Hello", &"World").unwrap();
 
             {
-                let mut progress =
-                    Progress::new(&mut sub_section.printer, "Progressing", Some(10)).unwrap();
-
-                for _ in 0..10 {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    progress.increment(1);
-                }
-            }
-
-            {
                 let mut multi_progress = MultiProgress::new(&mut sub_section.printer);
-                let mut first = multi_progress.add_progress("First", Some(10));
-                let mut second = multi_progress.add_progress("Second", Some(50));
-                let mut third = multi_progress.add_progress("Third", Some(100));
+                let mut first = multi_progress.add_progress("First", Some(10), None);
+                let mut second = multi_progress.add_progress("Second", Some(50), None);
+                let mut third = multi_progress.add_progress("Third", Some(100), None);
 
                 let first_handle = std::thread::spawn(move || {
                     first.set_ending_message("Done!");
@@ -824,16 +723,6 @@ mod tests {
                 first_handle.join().unwrap();
                 second_handle.join().unwrap();
             }
-
-            {
-                let mut spinner =
-                    Progress::new(&mut sub_section.printer, "Spinning", None).unwrap();
-
-                for _ in 0..10 {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    spinner.increment(1);
-                }
-            }
         }
 
         {
@@ -846,8 +735,8 @@ mod tests {
 
             let mut handles = Vec::new();
 
-            let task1_progress = multi_progress.add_progress("Task1", Some(30));
-            let task2_progress = multi_progress.add_progress("Task2", Some(30));
+            let task1_progress = multi_progress.add_progress("Task1", Some(30), None);
+            let task2_progress = multi_progress.add_progress("Task2", Some(30), None);
             let task1 = async move {
                 let mut progress = task1_progress;
                 progress.set_message("Task1a");
