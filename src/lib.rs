@@ -89,7 +89,7 @@ impl MultiProgressBar {
         self.progress.inc(count);
     }
 
-    pub fn start_process(
+    fn start_process(
         &mut self,
         command: &str,
         options: &ExecuteOptions,
@@ -107,12 +107,12 @@ impl MultiProgressBar {
     pub fn execute_process(
         &mut self,
         command: &str,
-        options: &ExecuteOptions,
-    ) -> anyhow::Result<()> {
+        options: ExecuteOptions,
+    ) -> anyhow::Result<Option<String>> {
         self.set_message(&options.get_full_command(command));
-        let child_process = self.start_process(command, options)?;
-        monitor_process(child_process, self, options)?;
-        Ok(())
+        let child_process = self.start_process(command, &options)?;
+        let result = monitor_process(child_process, self, &options)?;
+        Ok(result)
     }
 }
 
@@ -213,6 +213,7 @@ impl Drop for Heading<'_> {
 #[derive(Clone, Debug)]
 pub struct ExecuteOptions {
     pub label: String,
+    pub is_return_stdout: bool,
     pub working_directory: Option<String>,
     pub environment: Vec<(String, String)>,
     pub arguments: Vec<String>,
@@ -224,6 +225,7 @@ impl Default for ExecuteOptions {
     fn default() -> Self {
         Self {
             label: "working".to_string(),
+            is_return_stdout: false,
             working_directory: None,
             environment: vec![],
             arguments: vec![],
@@ -321,28 +323,28 @@ impl Printer {
         if self.level == Level::Trace {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn debug<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Debug {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn message<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Message {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn info<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Info {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn warning<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
@@ -367,7 +369,7 @@ impl Printer {
     }
 
     fn object<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        let value = serde_json::to_value(&value).unwrap();
+        let value = serde_json::to_value(value).context(format!("unwrapping"))?;
 
         if self.level <= Level::Message && value == serde_json::Value::Null {
             return Ok(());
@@ -502,7 +504,7 @@ fn monitor_process(
     mut child_process: std::process::Child,
     progress_bar: &mut MultiProgressBar,
     options: &ExecuteOptions,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let child_stdout = child_process
         .stdout
         .take()
@@ -517,14 +519,19 @@ fn monitor_process(
     let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
 
     let handle_stdout = |progress: &mut MultiProgressBar,
-                         writer: Option<&mut std::fs::File>|
+                         writer: Option<&mut std::fs::File>,
+                         content: Option<&mut String>|
      -> anyhow::Result<()> {
         let mut stdout = String::new();
         while let Ok(message) = stdout_rx.try_recv() {
-            if writer.is_some() {
+            if writer.is_some() || content.is_some() {
                 stdout.push_str(message.as_str());
             }
             progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
+        }
+
+        if let Some(content) = content {
+            content.push_str(stdout.as_str());
         }
 
         if let Some(writer) = writer {
@@ -551,6 +558,7 @@ fn monitor_process(
 
     let exit_status;
 
+    let mut stdout_content = String::new();
     let mut stderr_content = String::new();
 
     let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
@@ -558,6 +566,8 @@ fn monitor_process(
     } else {
         None
     };
+
+    
 
     {
         loop {
@@ -568,7 +578,13 @@ fn monitor_process(
                 }
             }
 
-            handle_stdout(progress_bar, output_file.as_mut())?;
+            let stdout_content = if options.is_return_stdout {
+                Some(&mut stdout_content)
+            } else {
+                None
+            };
+
+            handle_stdout(progress_bar, output_file.as_mut(), stdout_content)?;
             handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             progress_bar.increment(1);
@@ -584,12 +600,18 @@ fn monitor_process(
                 let exit_message = format!("Command failed with exit code: {code}");
                 return Err(anyhow::anyhow!("{exit_message} : {stderr_content}"));
             } else {
-                return Err(anyhow::anyhow!("Command failed with unknown exit code: {stderr_content}"));
+                return Err(anyhow::anyhow!(
+                    "Command failed with unknown exit code: {stderr_content}"
+                ));
             }
         }
     }
 
-    Ok(())
+    Ok(if options.is_return_stdout {
+        Some(stdout_content)
+    } else {
+        None
+    })
 }
 
 #[cfg(test)]
