@@ -1,4 +1,5 @@
 use anyhow::Context;
+use anyhow_source_location::{format_context, format_error};
 use indicatif::ProgressStyle;
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -32,7 +33,8 @@ impl<'a> Section<'a> {
                 "{}{}:",
                 " ".repeat(printer.indent()),
                 name.bold()
-            )?;
+            )
+            .context(format_context!(""))?;
         }
         printer.shift_right();
         Ok(Self { printer })
@@ -96,11 +98,11 @@ impl MultiProgressBar {
     ) -> anyhow::Result<std::process::Child> {
         if let Some(directory) = &options.working_directory {
             if !std::path::Path::new(&directory).exists() {
-                return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
+                return Err(format_error!("Directory does not exist: {directory}"));
             }
         }
 
-        let child_process = options.spawn(command)?;
+        let child_process = options.spawn(command).context(format_context!(""))?;
         Ok(child_process)
     }
 
@@ -110,8 +112,10 @@ impl MultiProgressBar {
         options: ExecuteOptions,
     ) -> anyhow::Result<Option<String>> {
         self.set_message(&options.get_full_command(command));
-        let child_process = self.start_process(command, &options)?;
-        let result = monitor_process(child_process, self, &options)?;
+        let child_process = self
+            .start_process(command, &options)
+            .context(format_context!(""))?;
+        let result = monitor_process(child_process, self, &options).context(format_context!(""))?;
         Ok(result)
     }
 }
@@ -184,7 +188,7 @@ pub struct Heading<'a> {
 
 impl<'a> Heading<'a> {
     pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
-        printer.newline()?;
+        printer.newline().context(format_context!(""))?;
         printer.enter_heading();
         {
             let heading = if printer.heading_count == 1 {
@@ -197,8 +201,8 @@ impl<'a> Heading<'a> {
                     .bold()
                     .to_string()
             };
-            writeln!(printer.writer, "{heading}")?;
-            writeln!(printer.writer)?;
+            writeln!(printer.writer, "{heading}").context(format_context!(""))?;
+            writeln!(printer.writer).context(format_context!(""))?;
         }
         Ok(Self { printer })
     }
@@ -272,7 +276,8 @@ impl ExecuteOptions {
         let result = process
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context(format_context!("{command}"))?;
 
         Ok(result)
     }
@@ -315,7 +320,7 @@ impl Printer {
     }
 
     pub fn newline(&mut self) -> anyhow::Result<()> {
-        writeln!(self.writer, " ")?;
+        writeln!(self.writer, " ").context(format_context!(""))?;
         Ok(())
     }
 
@@ -330,21 +335,21 @@ impl Printer {
         if self.level > Level::Debug {
             return Ok(());
         }
-        self.object(name, value)
+        return self.object(name, value);
     }
 
     pub fn message<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Message {
             return Ok(());
         }
-        self.object(name, value)
+        return self.object(name, value);
     }
 
     pub fn info<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Info {
             return Ok(());
         }
-        self.object(name, value)
+        return self.object(name, value);
     }
 
     pub fn warning<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
@@ -362,14 +367,14 @@ impl Printer {
     }
 
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
-        writeln!(self.writer, "```{name}")?;
-        write!(self.writer, "{}", content)?;
-        writeln!(self.writer, "```")?;
+        writeln!(self.writer, "```{name}").context(format_context!(""))?;
+        write!(self.writer, "{}", content).context(format_context!(""))?;
+        writeln!(self.writer, "```").context(format_context!(""))?;
         Ok(())
     }
 
     fn object<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        let value = serde_json::to_value(value).context(format!("unwrapping"))?;
+        let value = serde_json::to_value(&value).context(format_context!(""))?;
 
         if self.level <= Level::Message && value == serde_json::Value::Null {
             return Ok(());
@@ -381,10 +386,10 @@ impl Printer {
                 "{}{}: ",
                 " ".repeat(self.indent()),
                 name.bold()
-            )?;
+            ).context(format_context!(""))?;
         }
 
-        self.print_value(&value)?;
+        self.print_value(&value).context(format_context!(""))?;
         Ok(())
     }
 
@@ -411,41 +416,43 @@ impl Printer {
     fn print_value(&mut self, value: &serde_json::Value) -> anyhow::Result<()> {
         match value {
             serde_json::Value::Object(map) => {
-                writeln!(self.writer)?;
+                writeln!(self.writer).context(format_context!(""))?;
                 self.shift_right();
                 for (key, value) in map {
                     let is_skip = *value == serde_json::Value::Null && self.level > Level::Message;
                     if !is_skip {
                         {
-                            write!(self.writer, "{}{}: ", " ".repeat(self.indent()), key.bold())?;
+                            write!(self.writer, "{}{}: ", " ".repeat(self.indent()), key.bold())
+                                .context(format_context!(""))?;
                         }
-                        self.print_value(value)?;
+                        self.print_value(value).context(format_context!(""))?;
                     }
                 }
                 self.shift_left();
             }
             serde_json::Value::Array(array) => {
-                writeln!(self.writer)?;
+                writeln!(self.writer).context(format_context!(""))?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
                     {
-                        write!(self.writer, "{}[{index}]: ", " ".repeat(self.indent()))?;
+                        write!(self.writer, "{}[{index}]: ", " ".repeat(self.indent()))
+                            .context(format_context!(""))?;
                     }
-                    self.print_value(value)?;
+                    self.print_value(value).context(format_context!(""))?;
                 }
                 self.shift_left();
             }
             serde_json::Value::Null => {
-                writeln!(self.writer, "null")?;
+                writeln!(self.writer, "null").context(format_context!(""))?;
             }
             serde_json::Value::Bool(value) => {
-                writeln!(self.writer, "{value}")?;
+                writeln!(self.writer, "{value}").context(format_context!(""))?;
             }
             serde_json::Value::Number(value) => {
-                writeln!(self.writer, "{value}")?;
+                writeln!(self.writer, "{value}").context(format_context!(""))?;
             }
             serde_json::Value::String(value) => {
-                writeln!(self.writer, "{value}")?;
+                writeln!(self.writer, "{value}").context(format_context!(""))?;
             }
         }
 
@@ -460,30 +467,34 @@ impl Printer {
         let args = options.arguments.join(" ");
         let full_command = format!("{command} {args}");
 
-        self.info("execute", &full_command)?;
+        self.info("execute", &full_command).context(format_context!(""))?;
         if let Some(directory) = &options.working_directory {
-            self.info("directory", &directory)?;
+            self.info("directory", &directory)
+                .context(format_context!("")).context(format_context!(""))?;
             if !std::path::Path::new(&directory).exists() {
-                return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
+                return Err(format_error!("Directory does not exist: {directory}"));
             }
         }
 
-        let child_process = options.spawn(command)?;
+        let child_process = options.spawn(command).context(format_context!("{command}"))?;
         Ok(child_process)
     }
 
     pub fn execute_process(
         &mut self,
         command: &str,
-        options: &ExecuteOptions,
-    ) -> anyhow::Result<()> {
-        let section = Section::new(self, command)?;
-        let child_process = section.printer.start_process(command, options)?;
+        options: ExecuteOptions,
+    ) -> anyhow::Result<Option<String>> {
+        let section = Section::new(self, command).context(format_context!(""))?;
+        let child_process = section
+            .printer
+            .start_process(command, &options)
+            .context(format_context!("{command}"))?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None, None);
-        monitor_process(child_process, &mut progress_bar, options)?;
+        let result = monitor_process(child_process, &mut progress_bar, &options).context(format_context!(""))?;
 
-        Ok(())
+        Ok(result)
     }
 }
 
@@ -508,12 +519,12 @@ fn monitor_process(
     let child_stdout = child_process
         .stdout
         .take()
-        .ok_or(anyhow::anyhow!("Internal Error: Child has no stdout"))?;
+        .ok_or(format_error!("Internal Error: Child has no stdout"))?;
 
     let child_stderr = child_process
         .stderr
         .take()
-        .ok_or(anyhow::anyhow!("Internal Error: Child has no stderr"))?;
+        .ok_or(format_error!("Internal Error: Child has no stderr"))?;
 
     let (stdout_thread, stdout_rx) = ExecuteOptions::process_child_output(child_stdout)?;
     let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
@@ -558,16 +569,14 @@ fn monitor_process(
 
     let exit_status;
 
-    let mut stdout_content = String::new();
     let mut stderr_content = String::new();
+    let mut stdout_content = String::new();
 
     let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
-        Some(std::fs::File::create(log_path.as_str()).context(format!("{log_path}"))?)
+        Some(std::fs::File::create(log_path.as_str()).context(format_context!("{log_path}"))?)
     } else {
         None
     };
-
-    
 
     {
         loop {
@@ -584,8 +593,10 @@ fn monitor_process(
                 None
             };
 
-            handle_stdout(progress_bar, output_file.as_mut(), stdout_content)?;
-            handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)?;
+            handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
+                .context(format_context!(""))?;
+            handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
+                .context(format_context!(""))?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             progress_bar.increment(1);
         }
@@ -598,9 +609,9 @@ fn monitor_process(
         if !exit_status.success() {
             if let Some(code) = exit_status.code() {
                 let exit_message = format!("Command failed with exit code: {code}");
-                return Err(anyhow::anyhow!("{exit_message} : {stderr_content}"));
+                return Err(format_error!("{exit_message} : {stderr_content}"));
             } else {
-                return Err(anyhow::anyhow!(
+                return Err(format_error!(
                     "Command failed with unknown exit code: {stderr_content}"
                 ));
             }
