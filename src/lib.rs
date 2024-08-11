@@ -1,7 +1,11 @@
+use anyhow::Context;
 use indicatif::ProgressStyle;
 use owo_colors::OwoColorize;
 use serde::Serialize;
-use std::{io::BufRead, sync::mpsc};
+use std::{
+    io::{BufRead, Write},
+    sync::mpsc,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -107,7 +111,7 @@ impl MultiProgressBar {
     ) -> anyhow::Result<()> {
         self.set_message(&options.get_full_command(command));
         let child_process = self.start_process(command, options)?;
-        monitor_process(child_process, self)?;
+        monitor_process(child_process, self, options)?;
         Ok(())
     }
 }
@@ -206,12 +210,14 @@ impl Drop for Heading<'_> {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug)]
 pub struct ExecuteOptions {
     pub label: String,
     pub working_directory: Option<String>,
     pub environment: Vec<(String, String)>,
     pub arguments: Vec<String>,
+    pub max_length: usize,
+    pub log_file_path: Option<String>,
 }
 
 impl Default for ExecuteOptions {
@@ -221,6 +227,8 @@ impl Default for ExecuteOptions {
             working_directory: None,
             environment: vec![],
             arguments: vec![],
+            max_length: 48,
+            log_file_path: None,
         }
     }
 }
@@ -281,86 +289,6 @@ impl ExecuteOptions {
             },
             self.arguments.join(" "),
         )
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExecuteLater {
-    pub command: String,
-    pub options: ExecuteOptions,
-}
-
-impl ExecuteLater {
-    pub fn new(command: &str, options: ExecuteOptions) -> Self {
-        Self {
-            command: command.to_string(),
-            options,
-        }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!("{} {}", self.command, self.options.arguments.join(" "))
-    }
-}
-
-pub struct ExecuteBatch {
-    commands: Vec<(String, Vec<ExecuteLater>)>,
-}
-
-impl ExecuteBatch {
-    pub fn new() -> Self {
-        Self {
-            commands: Vec::new(),
-        }
-    }
-
-    pub fn add(&mut self, key: &str, options: Vec<ExecuteLater>) {
-        for (name, execute_later) in self.commands.iter_mut() {
-            if name == key {
-                execute_later.extend(options);
-                return;
-            }
-        }
-
-        self.commands.push((key.to_string(), options));
-    }
-
-    /// Consumes the batch
-    pub fn execute<'a>(&mut self, printer: &'a mut Printer) -> anyhow::Result<()> {
-        let section = Section::new(printer, &"Batch")?;
-
-        let mut multi_progress = MultiProgress::new(section.printer);
-        let mut handles = Vec::new();
-
-        for (key, self_execute_later) in &self.commands {
-            let mut progress = multi_progress.add_progress(key, None, None);
-            progress.set_prefix(key);
-            let mut execute_later = Vec::new();
-            for execute in self_execute_later {
-                execute_later.push(execute.clone());
-            }
-
-            let handle = std::thread::spawn(move || {
-                for execute in execute_later {
-                    progress.set_message(execute.to_string().as_str());
-
-                    let child_process = progress
-                        .start_process(execute.command.as_str(), &execute.options)
-                        .expect("failed to start process");
-                    let _ = monitor_process(child_process, &mut progress);
-                }
-                ()
-            });
-
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            handle.join().expect("Failed to join thread");
-        }
-
-        self.commands = Vec::new();
-        Ok(())
     }
 }
 
@@ -551,15 +479,29 @@ impl Printer {
         let child_process = section.printer.start_process(command, options)?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None, None);
-        monitor_process(child_process, &mut progress_bar)?;
+        monitor_process(child_process, &mut progress_bar, options)?;
 
         Ok(())
     }
 }
 
+fn sanitize_output(input: &str, max_length: usize) -> String {
+    //remove all backspaces and truncate
+    const EXCLUDED: &[char] = &[8u8 as char, '\r', '\n'];
+
+    let mut result = String::new();
+    for (offset, character) in input.chars().enumerate() {
+        if offset < max_length && !EXCLUDED.contains(&character) {
+            result.push(character);
+        }
+    }
+    result
+}
+
 fn monitor_process(
     mut child_process: std::process::Child,
     progress_bar: &mut MultiProgressBar,
+    options: &ExecuteOptions,
 ) -> anyhow::Result<()> {
     let child_stdout = child_process
         .stdout
@@ -574,28 +516,48 @@ fn monitor_process(
     let (stdout_thread, stdout_rx) = ExecuteOptions::process_child_output(child_stdout)?;
     let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
 
-    let handle_stdout =
-        |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
-            while let Ok(message) = stdout_rx.try_recv() {
-                content.push_str(message.as_str());
-                progress.set_message(message.as_str());
+    let handle_stdout = |progress: &mut MultiProgressBar,
+                         writer: Option<&mut std::fs::File>|
+     -> anyhow::Result<()> {
+        let mut stdout = String::new();
+        while let Ok(message) = stdout_rx.try_recv() {
+            if writer.is_some() {
+                stdout.push_str(message.as_str());
             }
-            Ok(())
-        };
+            progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
+        }
 
-    let handle_stderr =
-        |progress: &mut MultiProgressBar, content: &mut String| -> anyhow::Result<()> {
-            while let Ok(message) = stderr_rx.try_recv() {
-                content.push_str(message.as_str());
-                progress.set_message(message.as_str());
-            }
-            Ok(())
-        };
+        if let Some(writer) = writer {
+            let _ = writer.write_all(stdout.as_bytes());
+        }
+        Ok(())
+    };
+
+    let handle_stderr = |progress: &mut MultiProgressBar,
+                         writer: Option<&mut std::fs::File>,
+                         content: &mut String|
+     -> anyhow::Result<()> {
+        let mut stderr = String::new();
+        while let Ok(message) = stderr_rx.try_recv() {
+            stderr.push_str(message.as_str());
+            progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
+        }
+        content.push_str(stderr.as_str());
+        if let Some(writer) = writer {
+            let _ = writer.write_all(stderr.as_bytes());
+        }
+        Ok(())
+    };
 
     let exit_status;
 
-    let mut stdout_content = String::new();
     let mut stderr_content = String::new();
+
+    let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
+        Some(std::fs::File::create(log_path.as_str()).context(format!("{log_path}"))?)
+    } else {
+        None
+    };
 
     {
         loop {
@@ -606,8 +568,8 @@ fn monitor_process(
                 }
             }
 
-            handle_stdout(progress_bar, &mut stdout_content)?;
-            handle_stderr(progress_bar, &mut stderr_content)?;
+            handle_stdout(progress_bar, output_file.as_mut())?;
+            handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             progress_bar.increment(1);
         }
@@ -620,9 +582,9 @@ fn monitor_process(
         if !exit_status.success() {
             if let Some(code) = exit_status.code() {
                 let exit_message = format!("Command failed with exit code: {code}");
-                return Err(anyhow::anyhow!("{exit_message}"));
+                return Err(anyhow::anyhow!("{exit_message} : {stderr_content}"));
             } else {
-                return Err(anyhow::anyhow!("Command failed with unknown exit code"));
+                return Err(anyhow::anyhow!("Command failed with unknown exit code: {stderr_content}"));
             }
         }
     }
