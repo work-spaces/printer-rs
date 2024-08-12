@@ -115,7 +115,8 @@ impl MultiProgressBar {
         let child_process = self
             .start_process(command, &options)
             .context(format_context!(""))?;
-        let result = monitor_process(child_process, self, &options).context(format_context!(""))?;
+        let result =
+            monitor_process(command, child_process, self, &options).context(format_context!(""))?;
         Ok(result)
     }
 }
@@ -386,7 +387,8 @@ impl Printer {
                 "{}{}: ",
                 " ".repeat(self.indent()),
                 name.bold()
-            ).context(format_context!(""))?;
+            )
+            .context(format_context!(""))?;
         }
 
         self.print_value(&value).context(format_context!(""))?;
@@ -467,16 +469,19 @@ impl Printer {
         let args = options.arguments.join(" ");
         let full_command = format!("{command} {args}");
 
-        self.info("execute", &full_command).context(format_context!(""))?;
+        self.info("execute", &full_command)
+            .context(format_context!(""))?;
         if let Some(directory) = &options.working_directory {
             self.info("directory", &directory)
-                .context(format_context!("")).context(format_context!(""))?;
+                .context(format_context!(""))?;
             if !std::path::Path::new(&directory).exists() {
                 return Err(format_error!("Directory does not exist: {directory}"));
             }
         }
 
-        let child_process = options.spawn(command).context(format_context!("{command}"))?;
+        let child_process = options
+            .spawn(command)
+            .context(format_context!("{command}"))?;
         Ok(child_process)
     }
 
@@ -492,7 +497,8 @@ impl Printer {
             .context(format_context!("{command}"))?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None, None);
-        let result = monitor_process(child_process, &mut progress_bar, &options).context(format_context!(""))?;
+        let result = monitor_process(command, child_process, &mut progress_bar, &options)
+            .context(format_context!(""))?;
 
         Ok(result)
     }
@@ -512,6 +518,7 @@ fn sanitize_output(input: &str, max_length: usize) -> String {
 }
 
 fn monitor_process(
+    command: &str,
     mut child_process: std::process::Child,
     progress_bar: &mut MultiProgressBar,
     options: &ExecuteOptions,
@@ -573,7 +580,20 @@ fn monitor_process(
     let mut stdout_content = String::new();
 
     let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
-        Some(std::fs::File::create(log_path.as_str()).context(format_context!("{log_path}"))?)
+        let mut file = std::fs::File::create(log_path.as_str())
+            .context(format_context!("while creating {log_path}"))?;
+
+        let command = format!("command: {}\n", command);
+        let working_directory = format!(
+            "directory: {}\n",
+            options.working_directory.as_deref().unwrap_or("")
+        );
+        let arguments = format!("arguments: {}\n\n", options.arguments.join(" "));
+
+        file.write(format!("{command}{working_directory}{arguments}").as_bytes())
+            .context(format_context!("while writing {log_path}"))?;
+
+        Some(file)
     } else {
         None
     };
