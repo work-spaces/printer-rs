@@ -544,6 +544,7 @@ fn monitor_process(
         while let Ok(message) = stdout_rx.try_recv() {
             if writer.is_some() || content.is_some() {
                 stdout.push_str(message.as_str());
+                stdout.push_str("\n");
             }
             progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
         }
@@ -565,6 +566,7 @@ fn monitor_process(
         let mut stderr = String::new();
         while let Ok(message) = stderr_rx.try_recv() {
             stderr.push_str(message.as_str());
+            stderr.push_str("\n");
             progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
         }
         content.push_str(stderr.as_str());
@@ -598,28 +600,26 @@ fn monitor_process(
         None
     };
 
-    {
-        loop {
-            if let Ok(status) = child_process.try_wait() {
-                if let Some(status) = status {
-                    exit_status = Some(status);
-                    break;
-                }
+    loop {
+        if let Ok(status) = child_process.try_wait() {
+            if let Some(status) = status {
+                exit_status = Some(status);
+                break;
             }
-
-            let stdout_content = if options.is_return_stdout {
-                Some(&mut stdout_content)
-            } else {
-                None
-            };
-
-            handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
-                .context(format_context!(""))?;
-            handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
-                .context(format_context!(""))?;
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            progress_bar.increment(1);
         }
+
+        let stdout_content = if options.is_return_stdout {
+            Some(&mut stdout_content)
+        } else {
+            None
+        };
+
+        handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
+            .context(format_context!("failed to handle stdout"))?;
+        handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
+            .context(format_context!("failed to handle stderr"))?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        progress_bar.increment(1);
     }
 
     let _ = stdout_thread.join();
@@ -638,7 +638,17 @@ fn monitor_process(
         }
     }
 
+    handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
+        .context(format_context!("while handling stderr"))?;
+
     Ok(if options.is_return_stdout {
+        handle_stdout(
+            progress_bar,
+            output_file.as_mut(),
+            Some(&mut stdout_content),
+        )
+        .context(format_context!("while handling stdout"))?;
+
         Some(stdout_content)
     } else {
         None
