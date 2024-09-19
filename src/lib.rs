@@ -625,6 +625,20 @@ fn monitor_process(
     let _ = stdout_thread.join();
     let _ = stderr_thread.join();
 
+    {
+        let stdout_content = if options.is_return_stdout {
+            Some(&mut stdout_content)
+        } else {
+            None
+        };
+
+        handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
+            .context(format_context!("while handling stdout"))?;
+    }
+
+    handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
+        .context(format_context!("while handling stderr"))?;
+
     if let Some(exit_status) = exit_status {
         if !exit_status.success() {
             if let Some(code) = exit_status.code() {
@@ -638,17 +652,7 @@ fn monitor_process(
         }
     }
 
-    handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
-        .context(format_context!("while handling stderr"))?;
-
     Ok(if options.is_return_stdout {
-        handle_stdout(
-            progress_bar,
-            output_file.as_mut(),
-            Some(&mut stdout_content),
-        )
-        .context(format_context!("while handling stdout"))?;
-
         Some(stdout_content)
     } else {
         None
