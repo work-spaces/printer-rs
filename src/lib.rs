@@ -71,11 +71,13 @@ impl MultiProgressBar {
     }
 
     pub fn set_message(&mut self, message: &str) {
-        self.progress.set_message(message.to_owned());
+        let sanitized_message = sanitize_output(message, 80);
+        self.progress.set_message(sanitized_message);
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
-        self.final_message = Some(message.to_owned());
+        let sanitized_message = sanitize_output(message, 80);
+        self.final_message = Some(sanitized_message);
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
