@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::{
     io::{BufRead, Write},
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,6 +20,7 @@ pub enum Level {
 }
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
+const MAX_LENGTH: usize = 80;
 
 pub struct Section<'a> {
     pub printer: &'a mut Printer,
@@ -27,15 +28,9 @@ pub struct Section<'a> {
 
 impl<'a> Section<'a> {
     pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
-        {
-            writeln!(
-                printer.writer,
-                "{}{}:",
-                " ".repeat(printer.indent()),
-                name.bold()
-            )
+        printer
+            .write(format!("{}{}:", " ".repeat(printer.indent()), name.bold()).as_str())
             .context(format_context!(""))?;
-        }
         printer.shift_right();
         Ok(Self { printer })
     }
@@ -48,6 +43,7 @@ impl Drop for Section<'_> {
 }
 
 pub struct MultiProgressBar {
+    lock: Arc<Mutex<()>>,
     progress: indicatif::ProgressBar,
     final_message: Option<String>,
 }
@@ -60,6 +56,7 @@ impl MultiProgressBar {
     pub fn set_total(&mut self, total: u64) {
         if let Some(length) = self.progress.length() {
             if length != total {
+                let _lock = self.lock.lock().unwrap();
                 self.progress.set_length(total);
                 self.progress.set_position(0);
             }
@@ -67,20 +64,23 @@ impl MultiProgressBar {
     }
 
     pub fn set_prefix(&mut self, message: &str) {
+        let _lock = self.lock.lock().unwrap();
         self.progress.set_prefix(message.to_owned());
     }
 
     pub fn set_message(&mut self, message: &str) {
-        let sanitized_message = sanitize_output(message, 80);
+        let sanitized_message = sanitize_output(message, MAX_LENGTH);
+        let _lock = self.lock.lock().unwrap();
         self.progress.set_message(sanitized_message);
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
-        let sanitized_message = sanitize_output(message, 80);
+        let sanitized_message = sanitize_output(message, MAX_LENGTH);
         self.final_message = Some(sanitized_message);
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
+        let _lock = self.lock.lock().unwrap();
         self.progress.inc(count);
         if let Some(total) = self.total() {
             if self.progress.position() >= total {
@@ -90,6 +90,7 @@ impl MultiProgressBar {
     }
 
     pub fn increment(&mut self, count: u64) {
+        let _lock = self.lock.lock().unwrap();
         self.progress.inc(count);
     }
 
@@ -125,9 +126,13 @@ impl MultiProgressBar {
 
 impl Drop for MultiProgressBar {
     fn drop(&mut self) {
+        let _lock = self.lock.lock().unwrap();
         if let Some(message) = &self.final_message {
+            let sane_output = sanitize_output(message, MAX_LENGTH);
             self.progress
-                .finish_with_message(message.bold().to_string());
+                .finish_with_message(sane_output.bold().to_string());
+        } else {
+            self.progress.finish();
         }
     }
 }
@@ -151,6 +156,7 @@ impl<'a> MultiProgress<'a> {
         total: Option<u64>,
         finish_message: Option<&str>,
     ) -> MultiProgressBar {
+        let _lock = self.printer.lock.lock().unwrap();
         let indent = self.printer.indent();
         let progress = if let Some(total) = total {
             let progress = indicatif::ProgressBar::new(total);
@@ -179,6 +185,7 @@ impl<'a> MultiProgress<'a> {
                 .to_string(),
         );
         MultiProgressBar {
+            lock: self.printer.lock.clone(),
             progress,
             final_message: finish_message.map(|s| s.to_string()),
         }
@@ -204,8 +211,10 @@ impl<'a> Heading<'a> {
                     .bold()
                     .to_string()
             };
-            writeln!(printer.writer, "{heading}").context(format_context!(""))?;
-            writeln!(printer.writer).context(format_context!(""))?;
+            printer
+                .write(format!("{heading}").as_str())
+                .context(format_context!(""))?;
+            printer.write("\n").context(format_context!(""))?;
         }
         Ok(Self { printer })
     }
@@ -307,6 +316,7 @@ impl<W: std::io::Write + indicatif::TermLike> PrinterTrait for W {}
 
 pub struct Printer {
     pub level: Level,
+    lock: Arc<Mutex<()>>,
     indent: usize,
     heading_count: usize,
     writer: Box<dyn PrinterTrait>,
@@ -316,14 +326,21 @@ impl Printer {
     pub fn new_stdout() -> Self {
         Self {
             indent: 0,
+            lock: Arc::new(Mutex::new(())),
             level: Level::Info,
             heading_count: 0,
             writer: Box::new(console::Term::stdout()),
         }
     }
 
+    fn write(&mut self, message: &str) -> anyhow::Result<()> {
+        let _lock = self.lock.lock().unwrap();
+        write!(self.writer, "{}", message).context(format_context!(""))?;
+        Ok(())
+    }
+
     pub fn newline(&mut self) -> anyhow::Result<()> {
-        writeln!(self.writer, " ").context(format_context!(""))?;
+        self.write("\n")?;
         Ok(())
     }
 
@@ -370,9 +387,8 @@ impl Printer {
     }
 
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
-        writeln!(self.writer, "```{name}").context(format_context!(""))?;
-        write!(self.writer, "{}", content).context(format_context!(""))?;
-        writeln!(self.writer, "```").context(format_context!(""))?;
+        self.write(format!("```{name}\n{content}```\n").as_str())
+            .context(format_context!(""))?;
         Ok(())
     }
 
@@ -383,15 +399,7 @@ impl Printer {
             return Ok(());
         }
 
-        {
-            write!(
-                self.writer,
-                "{}{}: ",
-                " ".repeat(self.indent()),
-                name.bold()
-            )
-            .context(format_context!(""))?;
-        }
+        self.write(format!("{}{}: ", " ".repeat(self.indent()), name.bold()).as_str())?;
 
         self.print_value(&value).context(format_context!(""))?;
         Ok(())
@@ -420,14 +428,16 @@ impl Printer {
     fn print_value(&mut self, value: &serde_json::Value) -> anyhow::Result<()> {
         match value {
             serde_json::Value::Object(map) => {
-                writeln!(self.writer).context(format_context!(""))?;
+                self.write("\n").context(format_context!(""))?;
                 self.shift_right();
                 for (key, value) in map {
                     let is_skip = *value == serde_json::Value::Null && self.level > Level::Message;
                     if !is_skip {
                         {
-                            write!(self.writer, "{}{}: ", " ".repeat(self.indent()), key.bold())
-                                .context(format_context!(""))?;
+                            self.write(
+                                format!("{}{}: ", " ".repeat(self.indent()), key.bold()).as_str(),
+                            )
+                            .context(format_context!(""))?;
                         }
                         self.print_value(value).context(format_context!(""))?;
                     }
@@ -435,28 +445,28 @@ impl Printer {
                 self.shift_left();
             }
             serde_json::Value::Array(array) => {
-                writeln!(self.writer).context(format_context!(""))?;
+                self.write("\n")?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
-                    {
-                        write!(self.writer, "{}[{index}]: ", " ".repeat(self.indent()))
-                            .context(format_context!(""))?;
-                    }
+                    self.write(format!("{}[{index}]: ", " ".repeat(self.indent())).as_str())?;
                     self.print_value(value).context(format_context!(""))?;
                 }
                 self.shift_left();
             }
             serde_json::Value::Null => {
-                writeln!(self.writer, "null").context(format_context!(""))?;
+                self.write("null").context(format_context!(""))?;
             }
             serde_json::Value::Bool(value) => {
-                writeln!(self.writer, "{value}").context(format_context!(""))?;
+                self.write(format!("{value}").as_str())
+                    .context(format_context!(""))?;
             }
             serde_json::Value::Number(value) => {
-                writeln!(self.writer, "{value}").context(format_context!(""))?;
+                self.write(format!("{value}").as_str())
+                    .context(format_context!(""))?;
             }
             serde_json::Value::String(value) => {
-                writeln!(self.writer, "{value}").context(format_context!(""))?;
+                self.write(format!("{value}").as_str())
+                    .context(format_context!(""))?;
             }
         }
 
@@ -516,6 +526,10 @@ fn sanitize_output(input: &str, max_length: usize) -> String {
             result.push(character);
         }
     }
+    while result.len() < max_length {
+        result.push(' ');
+    }
+
     result
 }
 
@@ -621,7 +635,7 @@ fn monitor_process(
         handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
             .context(format_context!("failed to handle stderr"))?;
         std::thread::sleep(std::time::Duration::from_millis(50));
-        progress_bar.increment(1);
+        progress_bar.increment_with_overflow(1);
     }
 
     let _ = stdout_thread.join();
