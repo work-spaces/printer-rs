@@ -7,8 +7,9 @@ use std::{
     io::{BufRead, Write},
     sync::{mpsc, Arc, Mutex},
 };
+use strum::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub enum Level {
     Trace,
     Debug,
@@ -20,7 +21,19 @@ pub enum Level {
 }
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
-const MAX_LENGTH: usize = 80;
+
+fn format_log(indent: usize, max_width: usize, level: Level, message: &str) -> String {
+    let mut result = format!(
+        "{}{}: {message}",
+        " ".repeat(indent),
+        level.to_string().bold()
+    );
+    while result.len() < max_width {
+        result.push(' ');
+    }
+    result.push('\n');
+    result
+}
 
 pub struct Section<'a> {
     pub printer: &'a mut Printer,
@@ -29,7 +42,7 @@ pub struct Section<'a> {
 impl<'a> Section<'a> {
     pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
         printer
-            .write(format!("{}{}:", " ".repeat(printer.indent()), name.bold()).as_str())
+            .write(format!("{}{}:", " ".repeat(printer.indent), name.bold()).as_str())
             .context(format_context!(""))?;
         printer.shift_right();
         Ok(Self { printer })
@@ -44,6 +57,10 @@ impl Drop for Section<'_> {
 
 pub struct MultiProgressBar {
     lock: Arc<Mutex<()>>,
+    printer_level: Level,
+    indent: usize,
+    max_width: usize,
+    progress_width: usize,
     progress: indicatif::ProgressBar,
     final_message: Option<String>,
 }
@@ -63,20 +80,31 @@ impl MultiProgressBar {
         }
     }
 
+    pub fn log(&mut self, level: Level, message: &str) {
+        if level >= self.printer_level {
+            let _lock = self.lock.lock().unwrap();
+            self.progress
+                .println(format_log(self.indent, self.max_width, level, message).as_str());
+        }
+    }
+
     pub fn set_prefix(&mut self, message: &str) {
         let _lock = self.lock.lock().unwrap();
         self.progress.set_prefix(message.to_owned());
     }
 
+    fn construct_message(&self, message: &str) -> String {
+        let prefix_size = self.progress.prefix().len();
+        sanitize_output(message, self.max_width - self.progress_width - prefix_size)
+    }
+
     pub fn set_message(&mut self, message: &str) {
-        let sanitized_message = sanitize_output(message, MAX_LENGTH);
         let _lock = self.lock.lock().unwrap();
-        self.progress.set_message(sanitized_message);
+        self.progress.set_message(self.construct_message(message));
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
-        let sanitized_message = sanitize_output(message, MAX_LENGTH);
-        self.final_message = Some(sanitized_message);
+        self.final_message = Some(self.construct_message(message));
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
@@ -126,13 +154,10 @@ impl MultiProgressBar {
 
 impl Drop for MultiProgressBar {
     fn drop(&mut self) {
-        let _lock = self.lock.lock().unwrap();
         if let Some(message) = &self.final_message {
-            let sane_output = sanitize_output(message, MAX_LENGTH);
+            let _lock = self.lock.lock().unwrap();
             self.progress
-                .finish_with_message(sane_output.bold().to_string());
-        } else {
-            self.progress.finish();
+                .finish_with_message(self.construct_message(message).bold().to_string());
         }
     }
 }
@@ -144,6 +169,9 @@ pub struct MultiProgress<'a> {
 
 impl<'a> MultiProgress<'a> {
     pub fn new(printer: &'a mut Printer) -> Self {
+        let locker = printer.lock.clone();
+        let _lock = locker.lock().unwrap();
+
         Self {
             printer,
             multi_progress: indicatif::MultiProgress::new(),
@@ -157,7 +185,8 @@ impl<'a> MultiProgress<'a> {
         finish_message: Option<&str>,
     ) -> MultiProgressBar {
         let _lock = self.printer.lock.lock().unwrap();
-        let indent = self.printer.indent();
+
+        let indent = self.printer.indent;
         let progress = if let Some(total) = total {
             let progress = indicatif::ProgressBar::new(total);
             let template_string =
@@ -186,7 +215,11 @@ impl<'a> MultiProgress<'a> {
         );
         MultiProgressBar {
             lock: self.printer.lock.clone(),
+            printer_level: self.printer.level,
+            indent: self.printer.indent,
             progress,
+            progress_width: 28, // This is the default from indicatif?
+            max_width: self.printer.max_width,
             final_message: finish_message.map(|s| s.to_string()),
         }
     }
@@ -319,16 +352,22 @@ pub struct Printer {
     lock: Arc<Mutex<()>>,
     indent: usize,
     heading_count: usize,
+    max_width: usize,
     writer: Box<dyn PrinterTrait>,
 }
 
 impl Printer {
     pub fn new_stdout() -> Self {
+        let mut max_width = 80;
+        if let Some((width, _)) = term_size::dimensions() {
+            max_width = width;
+        }
         Self {
             indent: 0,
             lock: Arc::new(Mutex::new(())),
             level: Level::Info,
             heading_count: 0,
+            max_width,
             writer: Box::new(console::Term::stdout()),
         }
     }
@@ -386,6 +425,13 @@ impl Printer {
         return self.object(name.red().to_string().as_str(), value);
     }
 
+    pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
+        if self.level > level {
+            return Ok(());
+        }
+        self.write(format_log(self.indent, self.max_width, level, message).as_str())
+    }
+
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
         self.write(format!("```{name}\n{content}```\n").as_str())
             .context(format_context!(""))?;
@@ -399,14 +445,10 @@ impl Printer {
             return Ok(());
         }
 
-        self.write(format!("{}{}: ", " ".repeat(self.indent()), name.bold()).as_str())?;
+        self.write(format!("{}{}: ", " ".repeat(self.indent), name.bold()).as_str())?;
 
         self.print_value(&value).context(format_context!(""))?;
         Ok(())
-    }
-
-    fn indent(&self) -> usize {
-        self.indent
     }
 
     fn enter_heading(&mut self) {
@@ -435,7 +477,7 @@ impl Printer {
                     if !is_skip {
                         {
                             self.write(
-                                format!("{}{}: ", " ".repeat(self.indent()), key.bold()).as_str(),
+                                format!("{}{}: ", " ".repeat(self.indent), key.bold()).as_str(),
                             )
                             .context(format_context!(""))?;
                         }
@@ -448,7 +490,7 @@ impl Printer {
                 self.write("\n")?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
-                    self.write(format!("{}[{index}]: ", " ".repeat(self.indent())).as_str())?;
+                    self.write(format!("{}[{index}]: ", " ".repeat(self.indent)).as_str())?;
                     self.print_value(value).context(format_context!(""))?;
                 }
                 self.shift_left();
@@ -562,7 +604,7 @@ fn monitor_process(
                 stdout.push_str(message.as_str());
                 stdout.push_str("\n");
             }
-            progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
+            progress.set_message(message.as_str());
         }
 
         if let Some(content) = content {
@@ -583,7 +625,7 @@ fn monitor_process(
         while let Ok(message) = stderr_rx.try_recv() {
             stderr.push_str(message.as_str());
             stderr.push_str("\n");
-            progress.set_message(sanitize_output(message.as_str(), options.max_length).as_str());
+            progress.set_message(message.as_str());
         }
         content.push_str(stderr.as_str());
         if let Some(writer) = writer {
@@ -634,7 +676,7 @@ fn monitor_process(
             .context(format_context!("failed to handle stdout"))?;
         handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
             .context(format_context!("failed to handle stderr"))?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(100));
         progress_bar.increment_with_overflow(1);
     }
 
