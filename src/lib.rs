@@ -145,7 +145,7 @@ impl MultiProgressBar {
         self.set_message(&options.get_full_command(command));
         let child_process = self
             .start_process(command, &options)
-            .context(format_context!(""))?;
+            .context(format_context!("Failed to start process {command}"))?;
         let result =
             monitor_process(command, child_process, self, &options).context(format_context!(""))?;
         Ok(result)
@@ -266,7 +266,6 @@ pub struct ExecuteOptions {
     pub working_directory: Option<String>,
     pub environment: Vec<(String, String)>,
     pub arguments: Vec<String>,
-    pub max_length: usize,
     pub log_file_path: Option<String>,
 }
 
@@ -278,7 +277,6 @@ impl Default for ExecuteOptions {
             working_directory: None,
             environment: vec![],
             arguments: vec![],
-            max_length: 48,
             log_file_path: None,
         }
     }
