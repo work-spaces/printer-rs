@@ -358,7 +358,7 @@ impl Printer {
     pub fn new_stdout() -> Self {
         let mut max_width = 80;
         if let Some((width, _)) = term_size::dimensions() {
-            max_width = width;
+            max_width = width-1;
         }
         Self {
             indent: 0,
@@ -485,7 +485,7 @@ impl Printer {
                 self.shift_left();
             }
             serde_json::Value::Array(array) => {
-                self.write("\n")?;
+                self.write("\n").context(format_context!(""))?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
                     self.write(format!("{}[{index}]: ", " ".repeat(self.indent)).as_str())?;
@@ -494,18 +494,18 @@ impl Printer {
                 self.shift_left();
             }
             serde_json::Value::Null => {
-                self.write("null").context(format_context!(""))?;
+                self.write("null\n").context(format_context!(""))?;
             }
             serde_json::Value::Bool(value) => {
-                self.write(format!("{value}").as_str())
+                self.write(format!("{value}\n").as_str())
                     .context(format_context!(""))?;
             }
             serde_json::Value::Number(value) => {
-                self.write(format!("{value}").as_str())
+                self.write(format!("{value}\n").as_str())
                     .context(format_context!(""))?;
             }
             serde_json::Value::String(value) => {
-                self.write(format!("{value}").as_str())
+                self.write(format!("{value}\n").as_str())
                     .context(format_context!(""))?;
             }
         }
