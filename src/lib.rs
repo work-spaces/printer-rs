@@ -190,7 +190,7 @@ impl<'a> MultiProgress<'a> {
         let progress = if let Some(total) = total {
             let progress = indicatif::ProgressBar::new(total);
             let template_string =
-                { format!("{}{{prefix}} [{{bar:.cyan/blue}}] {{msg}}", " ".repeat(0)) };
+                { format!("{}[{{bar:.cyan/blue}}] {{prefix}} {{msg}}", " ".repeat(0)) };
             progress.set_style(
                 ProgressStyle::with_template(template_string.as_str())
                     .unwrap()
