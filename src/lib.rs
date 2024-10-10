@@ -245,7 +245,7 @@ impl<'a> Heading<'a> {
                     .to_string()
             };
             printer
-                .write(format!("{heading}").as_str())
+                .write(heading.as_str())
                 .context(format_context!(""))?;
             printer.write("\n").context(format_context!(""))?;
         }
@@ -358,7 +358,7 @@ impl Printer {
     pub fn new_stdout() -> Self {
         let mut max_width = 80;
         if let Some((width, _)) = term_size::dimensions() {
-            max_width = width-1;
+            max_width = width - 1;
         }
         Self {
             indent: 0,
@@ -392,35 +392,35 @@ impl Printer {
         if self.level > Level::Debug {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn message<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Message {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn info<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Info {
             return Ok(());
         }
-        return self.object(name, value);
+        self.object(name, value)
     }
 
     pub fn warning<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Warning {
             return Ok(());
         }
-        return self.object(name.yellow().to_string().as_str(), value);
+        self.object(name.yellow().to_string().as_str(), value)
     }
 
     pub fn error<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         if self.level > Level::Error {
             return Ok(());
         }
-        return self.object(name.red().to_string().as_str(), value);
+        self.object(name.red().to_string().as_str(), value)
     }
 
     pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
@@ -437,7 +437,7 @@ impl Printer {
     }
 
     fn object<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        let value = serde_json::to_value(&value).context(format_context!(""))?;
+        let value = serde_json::to_value(value).context(format_context!(""))?;
 
         if self.level <= Level::Message && value == serde_json::Value::Null {
             return Ok(());
@@ -600,7 +600,7 @@ fn monitor_process(
         while let Ok(message) = stdout_rx.try_recv() {
             if writer.is_some() || content.is_some() {
                 stdout.push_str(message.as_str());
-                stdout.push_str("\n");
+                stdout.push('\n');
             }
             progress.set_message(message.as_str());
         }
@@ -622,7 +622,7 @@ fn monitor_process(
         let mut stderr = String::new();
         while let Ok(message) = stderr_rx.try_recv() {
             stderr.push_str(message.as_str());
-            stderr.push_str("\n");
+            stderr.push('\n');
             progress.set_message(message.as_str());
         }
         content.push_str(stderr.as_str());
@@ -657,11 +657,9 @@ fn monitor_process(
     };
 
     loop {
-        if let Ok(status) = child_process.try_wait() {
-            if let Some(status) = status {
-                exit_status = Some(status);
-                break;
-            }
+        if let Ok(Some(status)) = child_process.try_wait() {
+            exit_status = Some(status);
+            break;
         }
 
         let stdout_content = if options.is_return_stdout {
@@ -747,7 +745,7 @@ mod tests {
 
         printer.info("Received", &received).unwrap();
 
-        printer.execute_process("/bin/ls", &options).unwrap();
+        printer.execute_process("/bin/ls", options).unwrap();
 
         {
             let mut heading = Heading::new(&mut printer, "First").unwrap();
