@@ -9,6 +9,8 @@ use std::{
 };
 use strum::Display;
 
+pub mod markdown;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub enum Level {
     Trace,
@@ -370,7 +372,7 @@ impl Printer {
         }
     }
 
-    fn write(&mut self, message: &str) -> anyhow::Result<()> {
+    pub(crate) fn write(&mut self, message: &str) -> anyhow::Result<()> {
         let _lock = self.lock.lock().unwrap();
         write!(self.writer, "{}", message).context(format_context!(""))?;
         Ok(())
