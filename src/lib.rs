@@ -391,42 +391,42 @@ impl Printer {
     }
 
     pub fn debug<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Debug {
+        if self.level >= Level::Debug {
             return Ok(());
         }
         self.object(name, value)
     }
 
     pub fn message<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Message {
+        if self.level >= Level::Message {
             return Ok(());
         }
         self.object(name, value)
     }
 
     pub fn info<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Info {
+        if self.level >= Level::Info {
             return Ok(());
         }
         self.object(name, value)
     }
 
     pub fn warning<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Warning {
+        if self.level >= Level::Warning {
             return Ok(());
         }
         self.object(name.yellow().to_string().as_str(), value)
     }
 
     pub fn error<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Error {
+        if self.level >= Level::Error {
             return Ok(());
         }
         self.object(name.red().to_string().as_str(), value)
     }
 
     pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
-        if self.level > level {
+        if self.level >= level {
             return Ok(());
         }
         self.write(format_log(self.indent, self.max_width, level, message).as_str())
