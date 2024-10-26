@@ -426,7 +426,7 @@ impl Printer {
     }
 
     pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
-        if self.level >= level {
+        if self.level > level {
             return Ok(());
         }
         self.write(format_log(self.indent, self.max_width, level, message).as_str())
