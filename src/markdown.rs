@@ -9,8 +9,9 @@ impl<'a> Markdown<'a> {
         Markdown { printer }
     }
 
-    pub fn heading(&mut self, level: u8, content: &str, ) -> anyhow::Result<()> {
-        self.printer.write(&format!("{} {}\n\n", "#".repeat(level as usize), content))?;
+    pub fn heading(&mut self, level: u8, content: &str) -> anyhow::Result<()> {
+        self.printer
+            .write(&format!("{} {}\n\n", "#".repeat(level as usize), content))?;
         Ok(())
     }
 
@@ -23,8 +24,9 @@ impl<'a> Markdown<'a> {
     }
 
     pub fn list_item(&mut self, level: u8, item: &str) -> anyhow::Result<()> {
-        let level = if level == 0 { 1_usize} else { level as usize };
-        self.printer.write(&format!("{}- {}\n", " ".repeat(((level)-1)*2 ), item))?;
+        let level = if level == 0 { 1_usize } else { level as usize };
+        self.printer
+            .write(&format!("{}- {}\n", " ".repeat(((level) - 1) * 2), item))?;
         Ok(())
     }
 
@@ -49,12 +51,13 @@ impl<'a> Markdown<'a> {
     }
 
     pub fn code_block(&mut self, code_type: &str, content: &str) -> anyhow::Result<()> {
-        self.printer.write(&format!("```{code_type}\n{}\n```", content))?;
+        self.printer
+            .write(&format!("```{code_type}\n{}\n```", content))?;
         Ok(())
     }
 
     pub fn paragraph(&mut self, content: &str) -> anyhow::Result<()> {
         self.printer.write(&format!("{}\n\n", content))?;
-        Ok(())  
+        Ok(())
     }
 }
