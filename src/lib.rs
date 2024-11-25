@@ -13,6 +13,7 @@ pub mod markdown;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub enum Level {
+    ContinuousIntegration,
     Trace,
     Debug,
     Message,
@@ -63,46 +64,65 @@ pub struct MultiProgressBar {
     indent: usize,
     max_width: usize,
     progress_width: usize,
-    progress: indicatif::ProgressBar,
+    progress: Option<indicatif::ProgressBar>,
     final_message: Option<String>,
 }
 
 impl MultiProgressBar {
     pub fn total(&self) -> Option<u64> {
-        self.progress.length()
+        if let Some(progress) = self.progress.as_ref() {
+            progress.length()
+        } else {
+            None
+        }
     }
 
     pub fn set_total(&mut self, total: u64) {
-        if let Some(length) = self.progress.length() {
-            if length != total {
-                let _lock = self.lock.lock().unwrap();
-                self.progress.set_length(total);
-                self.progress.set_position(0);
+        if let Some(progress) = self.progress.as_mut() {
+            if let Some(length) = progress.length() {
+                if length != total {
+                    let _lock = self.lock.lock().unwrap();
+                    progress.set_length(total);
+                    progress.set_position(0);
+                }
             }
         }
     }
 
     pub fn log(&mut self, level: Level, message: &str) {
         if level >= self.printer_level {
+            let formatted_message = format_log(self.indent, self.max_width, level, message);
             let _lock = self.lock.lock().unwrap();
-            self.progress
-                .println(format_log(self.indent, self.max_width, level, message).as_str());
+            if let Some(progress) = self.progress.as_ref() {
+                progress.println(formatted_message.as_str());
+            } else {
+                print!("{formatted_message}");
+            }
         }
     }
 
     pub fn set_prefix(&mut self, message: &str) {
-        let _lock = self.lock.lock().unwrap();
-        self.progress.set_prefix(message.to_owned());
+        if let Some(progress) = self.progress.as_mut() {
+            let _lock = self.lock.lock().unwrap();
+            progress.set_prefix(message.to_owned());
+        }
     }
 
     fn construct_message(&self, message: &str) -> String {
-        let prefix_size = self.progress.prefix().len();
+        let prefix_size = if let Some(progress) = self.progress.as_ref() {
+            progress.prefix().len()
+        } else {
+            0_usize
+        };
         sanitize_output(message, self.max_width - self.progress_width - prefix_size)
     }
 
     pub fn set_message(&mut self, message: &str) {
-        let _lock = self.lock.lock().unwrap();
-        self.progress.set_message(self.construct_message(message));
+        let constructed_message = self.construct_message(message);
+        if let Some(progress) = self.progress.as_mut() {
+            let _lock = self.lock.lock().unwrap();
+            progress.set_message(constructed_message);
+        }
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
@@ -110,18 +130,23 @@ impl MultiProgressBar {
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
-        let _lock = self.lock.lock().unwrap();
-        self.progress.inc(count);
-        if let Some(total) = self.total() {
-            if self.progress.position() >= total {
-                self.progress.set_position(0);
+        let progress_total = self.total().clone();
+        if let Some(progress) = self.progress.as_mut() {
+            let _lock = self.lock.lock().unwrap();
+            progress.inc(count);
+            if let Some(total) = progress_total {
+                if progress.position() >= total {
+                    progress.set_position(0);
+                }
             }
         }
     }
 
     pub fn increment(&mut self, count: u64) {
-        let _lock = self.lock.lock().unwrap();
-        self.progress.inc(count);
+        if let Some(progress) = self.progress.as_mut() {
+            let _lock = self.lock.lock().unwrap();
+            progress.inc(count);
+        }
     }
 
     fn start_process(
@@ -157,9 +182,11 @@ impl MultiProgressBar {
 impl Drop for MultiProgressBar {
     fn drop(&mut self) {
         if let Some(message) = &self.final_message {
-            let _lock = self.lock.lock().unwrap();
-            self.progress
-                .finish_with_message(self.construct_message(message).bold().to_string());
+            let constructed_message = self.construct_message(message);
+            if let Some(progress) = self.progress.as_mut() {
+                let _lock = self.lock.lock().unwrap();
+                progress.finish_with_message(constructed_message.bold().to_string());
+            }
         }
     }
 }
@@ -207,14 +234,20 @@ impl<'a> MultiProgress<'a> {
             progress
         };
 
-        let progress = self.multi_progress.add(progress);
+        let progress = if self.printer.level != Level::ContinuousIntegration {
+            let progress = self.multi_progress.add(progress);
 
-        let prefix = format!("{prefix}:");
-        progress.set_prefix(
-            format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
-                .bold()
-                .to_string(),
-        );
+            let prefix = format!("{prefix}:");
+            progress.set_prefix(
+                format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
+                    .bold()
+                    .to_string(),
+            );
+            Some(progress)
+        } else {
+            None
+        };
+
         MultiProgressBar {
             lock: self.printer.lock.clone(),
             printer_level: self.printer.level,
