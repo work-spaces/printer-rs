@@ -11,25 +11,37 @@ use strum::Display;
 
 pub mod markdown;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default)]
+
 pub enum Level {
-    ContinuousIntegration,
     Trace,
     Debug,
-    Message,
+    #[default]
     Info,
+    Message,
     Warning,
     Error,
     Silent,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Verbosity {
+    pub level: Level,
+    pub is_show_progress_bars: bool,
+}
+
 const PROGRESS_PREFIX_WIDTH: usize = 0;
 
-fn format_log(indent: usize, max_width: usize, level: Level, message: &str) -> String {
+
+fn is_verbosity_active(printer_level: Verbosity, verbosity: Level) -> bool{
+    verbosity >= printer_level.level
+}
+
+fn format_log(indent: usize, max_width: usize, verbosity: Level, message: &str) -> String {
     let mut result = format!(
         "{}{}: {message}",
         " ".repeat(indent),
-        level.to_string().bold()
+        verbosity.to_string().bold()
     );
     while result.len() < max_width {
         result.push(' ');
@@ -60,7 +72,7 @@ impl Drop for Section<'_> {
 
 pub struct MultiProgressBar {
     lock: Arc<Mutex<()>>,
-    printer_level: Level,
+    printer_verbosity: Verbosity,
     indent: usize,
     max_width: usize,
     progress_width: usize,
@@ -89,9 +101,9 @@ impl MultiProgressBar {
         }
     }
 
-    pub fn log(&mut self, level: Level, message: &str) {
-        if level >= self.printer_level {
-            let formatted_message = format_log(self.indent, self.max_width, level, message);
+    pub fn log(&mut self, verbosity: Level, message: &str) {
+        if is_verbosity_active(self.printer_verbosity, verbosity) {
+            let formatted_message = format_log(self.indent, self.max_width, verbosity, message);
             let _lock = self.lock.lock().unwrap();
             if let Some(progress) = self.progress.as_ref() {
                 progress.println(formatted_message.as_str());
@@ -130,7 +142,7 @@ impl MultiProgressBar {
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
-        let progress_total = self.total().clone();
+        let progress_total = self.total();
         if let Some(progress) = self.progress.as_mut() {
             let _lock = self.lock.lock().unwrap();
             progress.inc(count);
@@ -234,7 +246,7 @@ impl<'a> MultiProgress<'a> {
             progress
         };
 
-        let progress = if self.printer.level != Level::ContinuousIntegration {
+        let progress = if self.printer.verbosity.is_show_progress_bars {
             let progress = self.multi_progress.add(progress);
 
             let prefix = format!("{prefix}:");
@@ -250,7 +262,7 @@ impl<'a> MultiProgress<'a> {
 
         MultiProgressBar {
             lock: self.printer.lock.clone(),
-            printer_level: self.printer.level,
+            printer_verbosity: self.printer.verbosity,
             indent: self.printer.indent,
             progress,
             progress_width: 28, // This is the default from indicatif?
@@ -381,7 +393,7 @@ trait PrinterTrait: std::io::Write + indicatif::TermLike {}
 impl<W: std::io::Write + indicatif::TermLike> PrinterTrait for W {}
 
 pub struct Printer {
-    pub level: Level,
+    pub verbosity: Verbosity,
     lock: Arc<Mutex<()>>,
     indent: usize,
     heading_count: usize,
@@ -398,7 +410,7 @@ impl Printer {
         Self {
             indent: 0,
             lock: Arc::new(Mutex::new(())),
-            level: Level::Info,
+            verbosity: Verbosity::default(),
             heading_count: 0,
             max_width,
             writer: Box::new(console::Term::stdout()),
@@ -417,52 +429,59 @@ impl Printer {
     }
 
     pub fn trace<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Trace {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Trace) {
+            self.object(name, value)
+        } else {
+            Ok(())
         }
-        self.object(name, value)
     }
 
     pub fn debug<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Debug {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Debug) {
+            self.object(name, value)
+        } else {
+            Ok(())
         }
-        self.object(name, value)
     }
 
     pub fn message<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Message {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Message) {
+            self.object(name, value)
+        } else {
+            Ok(())
         }
-        self.object(name, value)
     }
 
     pub fn info<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Info {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Info) {
+            self.object(name, value)
+        } else {
+            Ok(())
         }
-        self.object(name, value)
     }
 
     pub fn warning<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Warning {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Warning) {
+            self.object(name.yellow().to_string().as_str(), value)
+        } else {
+            Ok(())
         }
-        self.object(name.yellow().to_string().as_str(), value)
     }
 
     pub fn error<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        if self.level > Level::Error {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, Level::Error) {
+            self.object(name.red().to_string().as_str(), value)
+        } else {
+            Ok(())
         }
-        self.object(name.red().to_string().as_str(), value)
     }
 
     pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
-        if self.level > level {
-            return Ok(());
+        if is_verbosity_active(self.verbosity, level) {
+            self.write(format_log(self.indent, self.max_width, level, message).as_str())
+        } else {
+            Ok(())
         }
-        self.write(format_log(self.indent, self.max_width, level, message).as_str())
     }
 
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
@@ -474,7 +493,7 @@ impl Printer {
     fn object<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
         let value = serde_json::to_value(value).context(format_context!(""))?;
 
-        if self.level <= Level::Message && value == serde_json::Value::Null {
+        if self.verbosity.level <= Level::Message && value == serde_json::Value::Null {
             return Ok(());
         }
 
@@ -506,7 +525,7 @@ impl Printer {
                 self.write("\n").context(format_context!(""))?;
                 self.shift_right();
                 for (key, value) in map {
-                    let is_skip = *value == serde_json::Value::Null && self.level > Level::Message;
+                    let is_skip = *value == serde_json::Value::Null && self.verbosity.level > Level::Message;
                     if !is_skip {
                         {
                             self.write(
