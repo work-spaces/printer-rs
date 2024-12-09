@@ -16,9 +16,9 @@ pub mod markdown;
 pub enum Level {
     Trace,
     Debug,
+    Message,
     #[default]
     Info,
-    Message,
     Warning,
     Error,
     Silent,
@@ -32,8 +32,7 @@ pub struct Verbosity {
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
 
-
-fn is_verbosity_active(printer_level: Verbosity, verbosity: Level) -> bool{
+fn is_verbosity_active(printer_level: Verbosity, verbosity: Level) -> bool {
     verbosity >= printer_level.level
 }
 
@@ -172,7 +171,9 @@ impl MultiProgressBar {
             }
         }
 
-        let child_process = options.spawn(command).context(format_context!(""))?;
+        let child_process = options.spawn(command).context(format_context!(
+            "Failed to spawn a child process using {command}"
+        ))?;
         Ok(child_process)
     }
 
@@ -525,7 +526,8 @@ impl Printer {
                 self.write("\n").context(format_context!(""))?;
                 self.shift_right();
                 for (key, value) in map {
-                    let is_skip = *value == serde_json::Value::Null && self.verbosity.level > Level::Message;
+                    let is_skip =
+                        *value == serde_json::Value::Null && self.verbosity.level > Level::Message;
                     if !is_skip {
                         {
                             self.write(
@@ -600,7 +602,7 @@ impl Printer {
         let child_process = section
             .printer
             .start_process(command, &options)
-            .context(format_context!("{command}"))?;
+            .context(format_context!("Faild to execute process: {command}"))?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None, None);
         let result = monitor_process(command, child_process, &mut progress_bar, &options)
@@ -700,9 +702,19 @@ fn monitor_process(
             "directory: {}\n",
             options.working_directory.as_deref().unwrap_or("")
         );
+        let mut environment = "environment:\n".to_string();
+        environment.push_str("  inherited:\n");
+        for (key, value) in std::env::vars() {
+            environment.push_str(format!("    {}: {}\n", key, value).as_str());
+        }
+        environment.push_str("  given:\n");
+        for (key, value) in options.environment.iter() {
+            environment.push_str(format!("    {}: {}\n", key, value).as_str());
+        }
         let arguments = format!("arguments: {}\n\n", options.arguments.join(" "));
 
-        file.write(format!("{command}{working_directory}{arguments}").as_bytes())
+
+        file.write(format!("{command}{working_directory}{environment}{arguments}").as_bytes())
             .context(format_context!("while writing {log_path}"))?;
 
         Some(file)
