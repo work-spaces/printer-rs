@@ -315,6 +315,7 @@ pub struct ExecuteOptions {
     pub environment: Vec<(String, String)>,
     pub arguments: Vec<String>,
     pub log_file_path: Option<String>,
+    pub clear_environment: bool,
 }
 
 impl Default for ExecuteOptions {
@@ -326,6 +327,7 @@ impl Default for ExecuteOptions {
             environment: vec![],
             arguments: vec![],
             log_file_path: None,
+            clear_environment: false,
         }
     }
 }
@@ -351,6 +353,10 @@ impl ExecuteOptions {
     fn spawn(&self, command: &str) -> anyhow::Result<std::process::Child> {
         use std::process::{Command, Stdio};
         let mut process = Command::new(command);
+
+        if self.clear_environment {
+            process.env_clear();
+        }
 
         for argument in &self.arguments {
             process.arg(argument);
@@ -703,16 +709,17 @@ fn monitor_process(
             options.working_directory.as_deref().unwrap_or("")
         );
         let mut environment = "environment:\n".to_string();
-        environment.push_str("  inherited:\n");
-        for (key, value) in std::env::vars() {
-            environment.push_str(format!("    {}: {}\n", key, value).as_str());
+        if !options.clear_environment {
+            environment.push_str("  inherited:\n");
+            for (key, value) in std::env::vars() {
+                environment.push_str(format!("    {}: {}\n", key, value).as_str());
+            }
         }
         environment.push_str("  given:\n");
         for (key, value) in options.environment.iter() {
             environment.push_str(format!("    {}: {}\n", key, value).as_str());
         }
         let arguments = format!("arguments: {}\n\n", options.arguments.join(" "));
-
 
         file.write(format!("{command}{working_directory}{environment}{arguments}").as_bytes())
             .context(format_context!("while writing {log_path}"))?;
