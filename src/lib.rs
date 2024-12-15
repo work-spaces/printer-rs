@@ -10,6 +10,7 @@ use std::{
 use strum::Display;
 
 pub mod markdown;
+mod null_term;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default)]
 
@@ -316,6 +317,7 @@ pub struct ExecuteOptions {
     pub arguments: Vec<String>,
     pub log_file_path: Option<String>,
     pub clear_environment: bool,
+    pub process_started_with_id: Option<fn(&str, u32)>,
 }
 
 impl Default for ExecuteOptions {
@@ -328,6 +330,7 @@ impl Default for ExecuteOptions {
             arguments: vec![],
             log_file_path: None,
             clear_environment: false,
+            process_started_with_id: None,
         }
     }
 }
@@ -376,6 +379,11 @@ impl ExecuteOptions {
             .spawn()
             .context(format_context!("{command}"))?;
 
+
+        if let Some(callback) = self.process_started_with_id.as_ref() {
+            callback(self.label.as_str(), result.id());
+        }
+
         Ok(result)
     }
 
@@ -421,6 +429,17 @@ impl Printer {
             heading_count: 0,
             max_width,
             writer: Box::new(console::Term::stdout()),
+        }
+    }
+
+    pub fn new_null_term() -> Self {
+        Self {
+            indent: 0,
+            lock: Arc::new(Mutex::new(())),
+            verbosity: Verbosity::default(),
+            heading_count: 0,
+            max_width: 80,
+            writer: Box::new(null_term::NullTerm::default()),
         }
     }
 
