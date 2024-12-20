@@ -1,7 +1,7 @@
 use anyhow::Context;
 use anyhow_source_location::{format_context, format_error};
 use indicatif::ProgressStyle;
-use owo_colors::OwoColorize;
+use owo_colors::{OwoColorize, Stream::Stdout};
 use serde::Serialize;
 use std::{
     io::{BufRead, Write},
@@ -29,6 +29,7 @@ pub enum Level {
 pub struct Verbosity {
     pub level: Level,
     pub is_show_progress_bars: bool,
+    pub is_tty: bool,
 }
 
 const PROGRESS_PREFIX_WIDTH: usize = 0;
@@ -41,7 +42,9 @@ fn format_log(indent: usize, max_width: usize, verbosity: Level, message: &str) 
     let mut result = format!(
         "{}{}: {message}",
         " ".repeat(indent),
-        verbosity.to_string().bold()
+        verbosity
+            .to_string()
+            .if_supports_color(Stdout, |text| text.bold())
     );
     while result.len() < max_width {
         result.push(' ');
@@ -254,7 +257,7 @@ impl<'a> MultiProgress<'a> {
             let prefix = format!("{prefix}:");
             progress.set_prefix(
                 format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
-                    .bold()
+                    .if_supports_color(Stdout, |text| text.bold())
                     .to_string(),
             );
             Some(progress)
@@ -378,7 +381,6 @@ impl ExecuteOptions {
             .stderr(Stdio::piped())
             .spawn()
             .context(format_context!("{command}"))?;
-
 
         if let Some(callback) = self.process_started_with_id.as_ref() {
             callback(self.label.as_str(), result.id());
@@ -523,7 +525,14 @@ impl Printer {
             return Ok(());
         }
 
-        self.write(format!("{}{}: ", " ".repeat(self.indent), name.bold()).as_str())?;
+        self.write(
+            format!(
+                "{}{}: ",
+                " ".repeat(self.indent),
+                name.if_supports_color(Stdout, |text| text.bold())
+            )
+            .as_str(),
+        )?;
 
         self.print_value(&value).context(format_context!(""))?;
         Ok(())
@@ -556,7 +565,12 @@ impl Printer {
                     if !is_skip {
                         {
                             self.write(
-                                format!("{}{}: ", " ".repeat(self.indent), key.bold()).as_str(),
+                                format!(
+                                    "{}{}: ",
+                                    " ".repeat(self.indent),
+                                    key.if_supports_color(Stdout, |text| text.bold())
+                                )
+                                .as_str(),
                             )
                             .context(format_context!(""))?;
                         }
