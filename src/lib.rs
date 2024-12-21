@@ -80,7 +80,7 @@ pub struct MultiProgressBar {
     max_width: usize,
     progress_width: usize,
     progress: Option<indicatif::ProgressBar>,
-    final_message: Option<String>,
+    final_message: Option<Arc<str>>,
 }
 
 impl MultiProgressBar {
@@ -141,7 +141,7 @@ impl MultiProgressBar {
     }
 
     pub fn set_ending_message(&mut self, message: &str) {
-        self.final_message = Some(self.construct_message(message));
+        self.final_message = Some(self.construct_message(message).into());
     }
 
     pub fn increment_with_overflow(&mut self, count: u64) {
@@ -170,7 +170,7 @@ impl MultiProgressBar {
         options: &ExecuteOptions,
     ) -> anyhow::Result<std::process::Child> {
         if let Some(directory) = &options.working_directory {
-            if !std::path::Path::new(&directory).exists() {
+            if !std::path::Path::new(directory.as_ref()).exists() {
                 return Err(format_error!("Directory does not exist: {directory}"));
             }
         }
@@ -272,7 +272,7 @@ impl<'a> MultiProgress<'a> {
             progress,
             progress_width: 28, // This is the default from indicatif?
             max_width: self.printer.max_width,
-            final_message: finish_message.map(|s| s.to_string()),
+            final_message: finish_message.map(|s| s.into()),
         }
     }
 }
@@ -313,12 +313,12 @@ impl Drop for Heading<'_> {
 
 #[derive(Clone, Debug)]
 pub struct ExecuteOptions {
-    pub label: String,
+    pub label: Arc<str>,
     pub is_return_stdout: bool,
-    pub working_directory: Option<String>,
-    pub environment: Vec<(String, String)>,
-    pub arguments: Vec<String>,
-    pub log_file_path: Option<String>,
+    pub working_directory: Option<Arc<str>>,
+    pub environment: Vec<(Arc<str>, Arc<str>)>,
+    pub arguments: Vec<Arc<str>>,
+    pub log_file_path: Option<Arc<str>>,
     pub clear_environment: bool,
     pub process_started_with_id: Option<fn(&str, u32)>,
 }
@@ -326,7 +326,7 @@ pub struct ExecuteOptions {
 impl Default for ExecuteOptions {
     fn default() -> Self {
         Self {
-            label: "working".to_string(),
+            label: "working".into(),
             is_return_stdout: false,
             working_directory: None,
             environment: vec![],
@@ -365,15 +365,15 @@ impl ExecuteOptions {
         }
 
         for argument in &self.arguments {
-            process.arg(argument);
+            process.arg(argument.as_ref());
         }
 
         if let Some(directory) = &self.working_directory {
-            process.current_dir(directory);
+            process.current_dir(directory.as_ref());
         }
 
         for (key, value) in self.environment.iter() {
-            process.env(key, value);
+            process.env(key.as_ref(), value.as_ref());
         }
 
         let result = process
@@ -383,7 +383,7 @@ impl ExecuteOptions {
             .context(format_context!("{command}"))?;
 
         if let Some(callback) = self.process_started_with_id.as_ref() {
-            callback(self.label.as_str(), result.id());
+            callback(self.label.as_ref(), result.id());
         }
 
         Ok(result)
@@ -420,9 +420,9 @@ pub struct Printer {
 
 impl Printer {
     pub fn new_stdout() -> Self {
-        let mut max_width = 80;
-        if let Some((width, _)) = term_size::dimensions() {
-            max_width = width - 1;
+        let mut max_width = 80 as usize;
+        if let Some((width, _)) = terminal_size::terminal_size() {
+            max_width = width.0 as usize - 1;
         }
         Self {
             indent: 0,
@@ -441,7 +441,7 @@ impl Printer {
             verbosity: Verbosity::default(),
             heading_count: 0,
             max_width: 80,
-            writer: Box::new(null_term::NullTerm::default()),
+            writer: Box::new(null_term::NullTerm{}),
         }
     }
 
@@ -621,7 +621,7 @@ impl Printer {
         if let Some(directory) = &options.working_directory {
             self.info("directory", &directory)
                 .context(format_context!(""))?;
-            if !std::path::Path::new(&directory).exists() {
+            if !std::path::Path::new(directory.as_ref()).exists() {
                 return Err(format_error!("Directory does not exist: {directory}"));
             }
         }
@@ -733,7 +733,7 @@ fn monitor_process(
     let mut stdout_content = String::new();
 
     let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
-        let mut file = std::fs::File::create(log_path.as_str())
+        let mut file = std::fs::File::create(log_path.as_ref())
             .context(format_context!("while creating {log_path}"))?;
 
         let command = format!("command: {}\n", command);
@@ -836,7 +836,7 @@ mod tests {
     fn printer() {
         let mut printer = Printer::new_stdout();
         let mut options = ExecuteOptions::default();
-        options.arguments.push("-alt".to_string());
+        options.arguments.push("-alt".into());
 
         let runtime =
             tokio::runtime::Runtime::new().expect("Internal Error: Failed to create runtime");
