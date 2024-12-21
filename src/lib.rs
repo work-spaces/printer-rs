@@ -81,6 +81,7 @@ pub struct MultiProgressBar {
     progress_width: usize,
     progress: Option<indicatif::ProgressBar>,
     final_message: Option<Arc<str>>,
+    is_increasing: bool,
 }
 
 impl MultiProgressBar {
@@ -148,11 +149,29 @@ impl MultiProgressBar {
         let progress_total = self.total();
         if let Some(progress) = self.progress.as_mut() {
             let _lock = self.lock.lock().unwrap();
-            progress.inc(count);
-            if let Some(total) = progress_total {
-                if progress.position() >= total {
-                    progress.set_position(0);
+            if self.is_increasing {
+                progress.inc(count);
+                if progress.position() == progress_total.unwrap_or(100) {
+                    self.is_increasing = false;
                 }
+            } else {
+                if progress.position() >= count {
+                    progress.set_position(progress.position() - count);
+                } else {
+                    progress.set_position(0);
+                    self.is_increasing = true;
+                }
+            }
+        }
+    }
+
+    pub fn decrement(&mut self, count: u64) {
+        if let Some(progress) = self.progress.as_mut() {
+            let _lock = self.lock.lock().unwrap();
+            if progress.position() >= count {
+                progress.set_position(progress.position() - count);
+            } else {
+                progress.set_position(0);
             }
         }
     }
@@ -232,28 +251,24 @@ impl<'a> MultiProgress<'a> {
     ) -> MultiProgressBar {
         let _lock = self.printer.lock.lock().unwrap();
 
-        let indent = self.printer.indent;
-        let progress = if let Some(total) = total {
+        let template_string = "[{elapsed_precise}][{bar:.cyan/blue}] {prefix} {msg}";
+
+        let (progress, progress_chars) = if let Some(total) = total {
             let progress = indicatif::ProgressBar::new(total);
-            let template_string =
-                { format!("{}[{{bar:.cyan/blue}}] {{prefix}} {{msg}}", " ".repeat(0)) };
-            progress.set_style(
-                ProgressStyle::with_template(template_string.as_str())
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
-            progress
+            (progress, "#>-")
         } else {
-            let progress = indicatif::ProgressBar::new_spinner();
-            let template_string =
-                { format!("{}{{prefix}} {{spinner}} {{msg}}", " ".repeat(indent)) };
-            progress.set_style(ProgressStyle::with_template(template_string.as_str()).unwrap());
-            progress
+            let progress = indicatif::ProgressBar::new(200);
+            (progress, "*>-")
         };
+
+        progress.set_style(
+            ProgressStyle::with_template(template_string)
+                .unwrap()
+                .progress_chars(progress_chars),
+        );
 
         let progress = if self.printer.verbosity.is_show_progress_bars {
             let progress = self.multi_progress.add(progress);
-
             let prefix = format!("{prefix}:");
             progress.set_prefix(
                 format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
@@ -273,6 +288,7 @@ impl<'a> MultiProgress<'a> {
             progress_width: 28, // This is the default from indicatif?
             max_width: self.printer.max_width,
             final_message: finish_message.map(|s| s.into()),
+            is_increasing: true,
         }
     }
 }
@@ -441,7 +457,7 @@ impl Printer {
             verbosity: Verbosity::default(),
             heading_count: 0,
             max_width: 80,
-            writer: Box::new(null_term::NullTerm{}),
+            writer: Box::new(null_term::NullTerm {}),
         }
     }
 
