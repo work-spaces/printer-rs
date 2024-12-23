@@ -251,7 +251,7 @@ impl<'a> MultiProgress<'a> {
     ) -> MultiProgressBar {
         let _lock = self.printer.lock.lock().unwrap();
 
-        let template_string = "[{elapsed_precise}][{bar:.cyan/blue}] {prefix} {msg}";
+        let template_string = "{elapsed_precise}|{bar:.cyan/blue}|{prefix} {msg}";
 
         let (progress, progress_chars) = if let Some(total) = total {
             let progress = indicatif::ProgressBar::new(total);
