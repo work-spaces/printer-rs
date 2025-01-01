@@ -130,7 +130,12 @@ impl MultiProgressBar {
         } else {
             0_usize
         };
-        sanitize_output(message, self.max_width - self.progress_width - prefix_size)
+        let length = if self.max_width > self.progress_width + prefix_size {
+            self.max_width - self.progress_width - prefix_size
+        } else {
+            0_usize
+        };
+        sanitize_output(message, length)
     }
 
     pub fn set_message(&mut self, message: &str) {
@@ -154,13 +159,11 @@ impl MultiProgressBar {
                 if progress.position() == progress_total.unwrap_or(100) {
                     self.is_increasing = false;
                 }
+            } else if progress.position() >= count {
+                progress.set_position(progress.position() - count);
             } else {
-                if progress.position() >= count {
-                    progress.set_position(progress.position() - count);
-                } else {
-                    progress.set_position(0);
-                    self.is_increasing = true;
-                }
+                progress.set_position(0);
+                self.is_increasing = true;
             }
         }
     }
@@ -436,7 +439,7 @@ pub struct Printer {
 
 impl Printer {
     pub fn new_stdout() -> Self {
-        let mut max_width = 80 as usize;
+        let mut max_width = 80_usize;
         if let Some((width, _)) = terminal_size::terminal_size() {
             max_width = width.0 as usize - 1;
         }
