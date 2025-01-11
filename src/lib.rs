@@ -2,7 +2,7 @@ use anyhow::Context;
 use anyhow_source_location::{format_context, format_error};
 use indicatif::ProgressStyle;
 use owo_colors::{OwoColorize, Stream::Stdout};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{BufRead, Write},
     sync::{mpsc, Arc, Mutex},
@@ -12,7 +12,9 @@ use strum::Display;
 pub mod markdown;
 mod null_term;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default, Serialize, Deserialize,
+)]
 
 pub enum Level {
     Trace,
@@ -20,6 +22,7 @@ pub enum Level {
     Message,
     #[default]
     Info,
+    App,
     Warning,
     Error,
     Silent,
@@ -346,6 +349,7 @@ pub struct ExecuteOptions {
     pub log_file_path: Option<Arc<str>>,
     pub clear_environment: bool,
     pub process_started_with_id: Option<fn(&str, u32)>,
+    pub log_level: Option<Level>,
 }
 
 impl Default for ExecuteOptions {
@@ -359,6 +363,7 @@ impl Default for ExecuteOptions {
             log_file_path: None,
             clear_environment: false,
             process_started_with_id: None,
+            log_level: None,
         }
     }
 }
@@ -698,6 +703,10 @@ fn sanitize_output(input: &str, max_length: usize) -> String {
     result
 }
 
+fn format_monitor_log_message(source: &str, command: &str, message: &str) -> String {
+    format!("[{source}:{command}] {message}")
+}
+
 fn monitor_process(
     command: &str,
     mut child_process: std::process::Child,
@@ -714,6 +723,9 @@ fn monitor_process(
         .take()
         .ok_or(format_error!("Internal Error: Child has no stderr"))?;
 
+    let log_level_stdout = options.log_level;
+    let log_level_stderr = options.log_level;
+
     let (stdout_thread, stdout_rx) = ExecuteOptions::process_child_output(child_stdout)?;
     let (stderr_thread, stderr_rx) = ExecuteOptions::process_child_output(child_stderr)?;
 
@@ -728,6 +740,12 @@ fn monitor_process(
                 stdout.push('\n');
             }
             progress.set_message(message.as_str());
+            if let Some(level) = log_level_stdout.as_ref() {
+                progress.log(
+                    *level,
+                    format_monitor_log_message("stdout", command, message.as_str()).as_str(),
+                );
+            }
         }
 
         if let Some(content) = content {
@@ -749,8 +767,15 @@ fn monitor_process(
             stderr.push_str(message.as_str());
             stderr.push('\n');
             progress.set_message(message.as_str());
+            if let Some(level) = log_level_stderr.as_ref() {
+                progress.log(
+                    *level,
+                    format_monitor_log_message("stdout", command, message.as_str()).as_str(),
+                );
+            }
         }
         content.push_str(stderr.as_str());
+
         if let Some(writer) = writer {
             let _ = writer.write_all(stderr.as_bytes());
         }
