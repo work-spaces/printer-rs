@@ -680,7 +680,7 @@ impl Printer {
 fn sanitize_output(input: &str, max_length: usize) -> String {
     //remove all backspaces and truncate
 
-    let escaped: Vec<_> = input.chars().flat_map(|c| c.escape_debug()).collect();
+    let escaped: Vec<_> = input.chars().flat_map(|c| c.escape_default()).collect();
 
     let mut result = String::new();
     let mut length = 0usize;
