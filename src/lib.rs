@@ -404,6 +404,7 @@ impl ExecuteOptions {
         let result = process
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .stdin(Stdio::null())
             .spawn()
             .context(format_context!("{command}"))?;
 
