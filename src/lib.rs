@@ -93,6 +93,12 @@ impl MultiProgressBar {
         }
     }
 
+    pub fn reset_elapsed(&mut self) {
+        if let Some(progress) = self.progress.as_mut() {
+            progress.reset_elapsed();
+        }
+    }
+
     pub fn set_total(&mut self, total: u64) {
         if let Some(progress) = self.progress.as_mut() {
             if let Some(length) = progress.length() {
@@ -672,11 +678,12 @@ impl Printer {
 
 fn sanitize_output(input: &str, max_length: usize) -> String {
     //remove all backspaces and truncate
-    const EXCLUDED: &[char] = &[8u8 as char, '\r', '\n'];
+
+    let escaped: Vec<_> = input.chars().flat_map(|c| c.escape_debug()).collect();
 
     let mut result = String::new();
-    for (offset, character) in input.chars().enumerate() {
-        if offset < max_length && !EXCLUDED.contains(&character) {
+    for (offset, character) in escaped.into_iter().enumerate() {
+        if offset < max_length {
             result.push(character);
         }
     }
