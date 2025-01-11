@@ -683,9 +683,11 @@ fn sanitize_output(input: &str, max_length: usize) -> String {
     let escaped: Vec<_> = input.chars().flat_map(|c| c.escape_debug()).collect();
 
     let mut result = String::new();
-    for (offset, character) in escaped.into_iter().enumerate() {
-        if offset < max_length {
+    let mut length = 0usize;
+    for character in escaped.into_iter() {
+        if length < max_length {
             result.push(character);
+            length += 1;
         }
     }
     while result.len() < max_length {
