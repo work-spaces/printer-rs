@@ -447,7 +447,8 @@ impl Printer {
     pub fn new_stdout() -> Self {
         let mut max_width = 80_usize;
         if let Some((width, _)) = terminal_size::terminal_size() {
-            max_width = width.0 as usize - 1;
+            // leave a buffer of 8 characters
+            max_width = width.0 as usize - 8;
         }
         Self {
             indent: 0,
