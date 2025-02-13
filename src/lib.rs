@@ -350,6 +350,7 @@ pub struct ExecuteOptions {
     pub clear_environment: bool,
     pub process_started_with_id: Option<fn(&str, u32)>,
     pub log_level: Option<Level>,
+    pub timeout: Option<std::time::Duration>,
 }
 
 impl Default for ExecuteOptions {
@@ -364,6 +365,7 @@ impl Default for ExecuteOptions {
             clear_environment: false,
             process_started_with_id: None,
             log_level: None,
+            timeout: None,
         }
     }
 }
@@ -713,6 +715,9 @@ fn monitor_process(
     progress_bar: &mut MultiProgressBar,
     options: &ExecuteOptions,
 ) -> anyhow::Result<Option<String>> {
+
+    let start_time = std::time::Instant::now();
+
     let child_stdout = child_process
         .stdout
         .take()
@@ -835,6 +840,14 @@ fn monitor_process(
             .context(format_context!("failed to handle stderr"))?;
         std::thread::sleep(std::time::Duration::from_millis(100));
         progress_bar.increment_with_overflow(1);
+
+        let now = std::time::Instant::now();
+
+        if let Some(timeout) = options.timeout {
+            if now - start_time > timeout {
+                child_process.kill().context(format_context!("Failed to kill process"))?;
+            }
+        }
     }
 
     let _ = stdout_thread.join();
