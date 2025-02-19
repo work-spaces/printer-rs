@@ -8,6 +8,7 @@ use std::{
     sync::{mpsc, Arc, Mutex},
 };
 use strum::Display;
+use std::collections::HashMap;
 
 pub mod markdown;
 mod null_term;
@@ -26,6 +27,15 @@ pub enum Level {
     Warning,
     Error,
     Silent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogHeader {
+    command: Arc<str>,
+    working_directory: Option<Arc<str>>,
+    environment: HashMap<Arc<str>, HashMap<Arc<str>, Arc<str>>>,
+    arguments: Vec<Arc<str>>,
+    shell: Arc<str>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -452,12 +462,21 @@ pub struct Printer {
 }
 
 impl Printer {
-    pub fn new_stdout() -> Self {
-        let mut max_width = 80_usize;
+    pub fn get_log_divider() -> Arc<str> {
+        "=".repeat(80).into()
+    }
+
+    pub fn get_terminal_width() -> usize {
+        const ASSUMED_WIDTH: usize = 80;
         if let Some((width, _)) = terminal_size::terminal_size() {
-            // leave a buffer of 8 characters
-            max_width = width.0 as usize - 8;
+            width.0 as usize
+        } else {
+            ASSUMED_WIDTH
         }
+    }
+
+    pub fn new_stdout() -> Self {
+        let max_width = Self::get_terminal_width();
         Self {
             indent: 0,
             lock: Arc::new(Mutex::new(())),
@@ -715,7 +734,6 @@ fn monitor_process(
     progress_bar: &mut MultiProgressBar,
     options: &ExecuteOptions,
 ) -> anyhow::Result<Option<String>> {
-
     let start_time = std::time::Instant::now();
 
     let child_stdout = child_process
@@ -796,25 +814,42 @@ fn monitor_process(
         let mut file = std::fs::File::create(log_path.as_ref())
             .context(format_context!("while creating {log_path}"))?;
 
-        let command = format!("command: {}\n", command);
-        let working_directory = format!(
-            "directory: {}\n",
-            options.working_directory.as_deref().unwrap_or("")
-        );
-        let mut environment = "environment:\n".to_string();
+        let mut environment = HashMap::new();
+        const INHERITED: &str = "inherited";
+        const GIVEN: &str = "given";
+        environment.insert(INHERITED.into(), HashMap::new());
+        environment.insert(GIVEN.into(), HashMap::new());
+        let env_inherited = environment.get_mut(INHERITED).unwrap();
         if !options.clear_environment {
-            environment.push_str("  inherited:\n");
             for (key, value) in std::env::vars() {
-                environment.push_str(format!("    {}: {}\n", key, value).as_str());
+                env_inherited.insert(key.into(), value.into());
             }
         }
-        environment.push_str("  given:\n");
+        let env_given = environment.get_mut(GIVEN).unwrap();
         for (key, value) in options.environment.iter() {
-            environment.push_str(format!("    {}: {}\n", key, value).as_str());
+            env_given.insert(key.clone(), value.clone());
         }
-        let arguments = format!("arguments: {}\n\n", options.arguments.join(" "));
 
-        file.write(format!("{command}{working_directory}{environment}{arguments}").as_bytes())
+        let arguments = options.arguments.join(" ");
+        let arguments_escaped: Vec<_> = arguments.chars().flat_map(|c| c.escape_default()).collect();
+        let args = arguments_escaped.into_iter().collect::<String>();
+        let shell = format!("{command} {args}").into();
+
+        let log_header = LogHeader {
+            command: command.into(),
+            working_directory: options.working_directory.clone(),
+            environment,
+            arguments: options.arguments.clone(),
+            shell,
+        };
+
+        let log_header_serialized = serde_yaml::to_string(&log_header).context(format_context!(
+            "Internal Error: failed to yamlize log header"
+        ))?;
+
+        let divider = Printer::get_log_divider();
+
+        file.write(format!("{log_header_serialized}{divider}\n").as_bytes())
             .context(format_context!("while writing {log_path}"))?;
 
         Some(file)
@@ -845,7 +880,9 @@ fn monitor_process(
 
         if let Some(timeout) = options.timeout {
             if now - start_time > timeout {
-                child_process.kill().context(format_context!("Failed to kill process"))?;
+                child_process
+                    .kill()
+                    .context(format_context!("Failed to kill process"))?;
             }
         }
     }
