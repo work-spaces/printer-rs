@@ -3,12 +3,12 @@ use anyhow_source_location::{format_context, format_error};
 use indicatif::ProgressStyle;
 use owo_colors::{OwoColorize, Stream::Stdout};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     io::{BufRead, Write},
     sync::{mpsc, Arc, Mutex},
 };
 use strum::Display;
-use std::collections::HashMap;
 
 pub mod markdown;
 mod null_term;
@@ -42,6 +42,7 @@ pub struct LogHeader {
 pub struct Verbosity {
     pub level: Level,
     pub is_show_progress_bars: bool,
+    pub is_show_elapsed_time: bool,
     pub is_tty: bool,
 }
 
@@ -51,9 +52,22 @@ fn is_verbosity_active(printer_level: Verbosity, verbosity: Level) -> bool {
     verbosity >= printer_level.level
 }
 
-fn format_log(indent: usize, max_width: usize, verbosity: Level, message: &str) -> String {
+fn format_log(
+    indent: usize,
+    max_width: usize,
+    verbosity: Level,
+    message: &str,
+    is_show_elapsed_time: bool,
+    start_time: std::time::Instant,
+) -> String {
+    let timestamp: Arc<str> = if is_show_elapsed_time {
+        let elapsed = std::time::Instant::now() - start_time;
+        format!("{:.3}:", elapsed.as_secs_f64()).into()
+    } else {
+        "".into()
+    };
     let mut result = format!(
-        "{}{}: {message}",
+        "{timestamp}{}{}: {message}",
         " ".repeat(indent),
         verbosity
             .to_string()
@@ -89,6 +103,7 @@ impl Drop for Section<'_> {
 pub struct MultiProgressBar {
     lock: Arc<Mutex<()>>,
     printer_verbosity: Verbosity,
+    start_time: std::time::Instant,
     indent: usize,
     max_width: usize,
     progress_width: usize,
@@ -126,7 +141,14 @@ impl MultiProgressBar {
 
     pub fn log(&mut self, verbosity: Level, message: &str) {
         if is_verbosity_active(self.printer_verbosity, verbosity) {
-            let formatted_message = format_log(self.indent, self.max_width, verbosity, message);
+            let formatted_message = format_log(
+                self.indent,
+                self.max_width,
+                verbosity,
+                message,
+                self.printer_verbosity.is_show_elapsed_time,
+                self.start_time,
+            );
             let _lock = self.lock.lock().unwrap();
             if let Some(progress) = self.progress.as_ref() {
                 progress.println(formatted_message.as_str());
@@ -311,6 +333,7 @@ impl<'a> MultiProgress<'a> {
             max_width: self.printer.max_width,
             final_message: finish_message.map(|s| s.into()),
             is_increasing: true,
+            start_time: self.printer.start_time,
         }
     }
 }
@@ -459,6 +482,7 @@ pub struct Printer {
     heading_count: usize,
     max_width: usize,
     writer: Box<dyn PrinterTrait>,
+    start_time: std::time::Instant,
 }
 
 impl Printer {
@@ -484,6 +508,7 @@ impl Printer {
             heading_count: 0,
             max_width,
             writer: Box::new(console::Term::stdout()),
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -495,6 +520,7 @@ impl Printer {
             heading_count: 0,
             max_width: 80,
             writer: Box::new(null_term::NullTerm {}),
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -559,7 +585,17 @@ impl Printer {
 
     pub fn log(&mut self, level: Level, message: &str) -> anyhow::Result<()> {
         if is_verbosity_active(self.verbosity, level) {
-            self.write(format_log(self.indent, self.max_width, level, message).as_str())
+            self.write(
+                format_log(
+                    self.indent,
+                    self.max_width,
+                    level,
+                    message,
+                    self.verbosity.is_show_elapsed_time,
+                    self.start_time,
+                )
+                .as_str(),
+            )
         } else {
             Ok(())
         }
@@ -831,7 +867,8 @@ fn monitor_process(
         }
 
         let arguments = options.arguments.join(" ");
-        let arguments_escaped: Vec<_> = arguments.chars().flat_map(|c| c.escape_default()).collect();
+        let arguments_escaped: Vec<_> =
+            arguments.chars().flat_map(|c| c.escape_default()).collect();
         let args = arguments_escaped.into_iter().collect::<String>();
         let shell = format!("{command} {args}").into();
 
