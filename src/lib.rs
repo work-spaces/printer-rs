@@ -12,6 +12,7 @@ use strum::Display;
 
 pub mod markdown;
 mod null_term;
+mod file_term;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default, Serialize, Deserialize,
@@ -510,6 +511,19 @@ impl Printer {
             writer: Box::new(console::Term::stdout()),
             start_time: std::time::Instant::now(),
         }
+    }
+
+    pub fn new_file(path: &str) -> anyhow::Result<Self> {
+        let file_writer = file_term::FileTerm::new(path)?;
+        Ok(Self {
+            indent: 0,
+            lock: Arc::new(Mutex::new(())),
+            verbosity: Verbosity::default(),
+            heading_count: 0,
+            max_width: 65535,
+            writer: Box::new(file_writer),
+            start_time: std::time::Instant::now(),
+        })
     }
 
     pub fn new_null_term() -> Self {
