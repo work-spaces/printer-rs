@@ -1,5 +1,10 @@
 # Changes
 
+## v0.1.4
+
+- Add file term printer
+- Improve markdown printer
+
 ## v0.1.3
 
 - Use tag on anyhow source location
@@ -15,7 +20,7 @@
 ## Developer Notes
 
 ```sh
-export VERSION=0.1.3
+export VERSION=0.1.4
 git tag -a v$VERSION -m "Update version"
 git push origin tag v$VERSION
 ```
