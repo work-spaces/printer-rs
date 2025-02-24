@@ -15,6 +15,16 @@ impl<'a> Markdown<'a> {
         Ok(())
     }
 
+    pub fn write(&mut self, content: &str) -> anyhow::Result<()> {
+        self.printer.write(content)?;
+        Ok(())
+    }
+
+    pub fn hline(&mut self) -> anyhow::Result<()> {
+        self.printer.write("\n---\n\n")?;
+        Ok(())
+    }
+
     pub fn list(&mut self, items: Vec<&str>) -> anyhow::Result<()> {
         for item in items {
             self.printer.write(&format!("- {}\n", item))?;
@@ -35,6 +45,15 @@ impl<'a> Markdown<'a> {
         Ok(())
     }
 
+    pub fn get_link(show: &str, link: &str) -> String {
+        format!("[{show}]({link})")
+    }
+
+    pub fn link(&mut self, show: &str, link: &str) -> anyhow::Result<()> {
+        self.printer.write(&Self::get_link(show, link))?;
+        Ok(())
+    }
+
     pub fn italic(&mut self, content: &str) -> anyhow::Result<()> {
         self.printer.write(&format!("*{}*", content))?;
         Ok(())
@@ -52,7 +71,7 @@ impl<'a> Markdown<'a> {
 
     pub fn code_block(&mut self, code_type: &str, content: &str) -> anyhow::Result<()> {
         self.printer
-            .write(&format!("```{code_type}\n{}\n```", content))?;
+            .write(&format!("```{code_type}\n{}\n```\n", content))?;
         Ok(())
     }
 
@@ -60,4 +79,5 @@ impl<'a> Markdown<'a> {
         self.printer.write(&format!("{}\n\n", content))?;
         Ok(())
     }
+
 }
