@@ -1,16 +1,17 @@
-use std::io::{Result as IoResult, Write};
+use anyhow::Context;
 use anyhow_source_location::format_context;
 use indicatif::TermLike;
-use anyhow::Context;
+use std::io::{Result as IoResult, Write};
 
 #[derive(Debug)]
-pub struct FileTerm{
+pub struct FileTerm {
     pub file: std::fs::File,
 }
 
 impl FileTerm {
     pub fn new(path: &str) -> anyhow::Result<Self> {
-        let file = std::fs::File::create(path).context(format_context!("Failed to create file: {}", path))?;
+        let file = std::fs::File::create(path)
+            .context(format_context!("Failed to create file: {}", path))?;
         Ok(Self { file })
     }
 }
@@ -67,6 +68,4 @@ impl TermLike for FileTerm {
     fn write_str(&self, _: &str) -> std::io::Result<()> {
         Ok(()) // Pretend everything is written successfully
     }
-
 }
-

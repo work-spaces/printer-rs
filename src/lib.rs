@@ -10,9 +10,9 @@ use std::{
 };
 use strum::Display;
 
+mod file_term;
 pub mod markdown;
 mod null_term;
-mod file_term;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display, Default, Serialize, Deserialize,
