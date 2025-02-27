@@ -1,5 +1,10 @@
 # Changes
 
+## v0.1.5
+
+- cargo fmt
+- make markdown formatting available to strings
+
 ## v0.1.4
 
 - Add file term printer
@@ -20,7 +25,7 @@
 ## Developer Notes
 
 ```sh
-export VERSION=0.1.4
+export VERSION=0.1.5
 git tag -a v$VERSION -m "Update version"
 git push origin tag v$VERSION
 ```
