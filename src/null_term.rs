@@ -1,6 +1,6 @@
+use indicatif::TermLike;
 use std::fmt::Debug;
 use std::io::{Result as IoResult, Write};
-use indicatif::TermLike;
 
 #[derive(Default)]
 pub struct NullTerm;
@@ -62,6 +62,4 @@ impl TermLike for NullTerm {
     fn write_str(&self, _: &str) -> std::io::Result<()> {
         Ok(()) // Pretend everything is written successfully
     }
-
 }
-
