@@ -321,7 +321,7 @@ impl<'a> MultiProgress<'a> {
             let progress = self.multi_progress.add(progress);
             let prefix = format!("{prefix}:");
             progress.set_prefix(
-                format!("{prefix:width$}", width = PROGRESS_PREFIX_WIDTH)
+                format!("{prefix:PROGRESS_PREFIX_WIDTH$}")
                     .if_supports_color(Stdout, |text| text.bold())
                     .to_string(),
             );
@@ -545,7 +545,7 @@ impl Printer {
 
     pub(crate) fn write(&mut self, message: &str) -> anyhow::Result<()> {
         let _lock = self.lock.lock().unwrap();
-        write!(self.writer, "{}", message).context(format_context!(""))?;
+        write!(self.writer, "{message}").context(format_context!(""))?;
         Ok(())
     }
 
