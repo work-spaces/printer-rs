@@ -25,6 +25,7 @@ pub enum Level {
     #[default]
     Info,
     App,
+    Passthrough,
     Warning,
     Error,
     Silent,
@@ -67,13 +68,17 @@ fn format_log(
     } else {
         "".into()
     };
-    let mut result = format!(
-        "{timestamp}{}{}: {message}",
-        " ".repeat(indent),
-        verbosity
-            .to_string()
-            .if_supports_color(Stdout, |text| text.bold())
-    );
+    let mut result = if verbosity == Level::Passthrough {
+        format!("{timestamp}{message}")
+    } else {
+        format!(
+            "{timestamp}{}{}: {message}",
+            " ".repeat(indent),
+            verbosity
+                .to_string()
+                .if_supports_color(Stdout, |text| text.bold())
+        )
+    };
     while result.len() < max_width {
         result.push(' ');
     }
@@ -774,8 +779,12 @@ fn sanitize_output(input: &str, max_length: usize) -> String {
     result
 }
 
-fn format_monitor_log_message(source: &str, command: &str, message: &str) -> String {
-    format!("[{source}:{command}] {message}")
+fn format_monitor_log_message(level: Level, source: &str, command: &str, message: &str) -> String {
+    if level == Level::Passthrough {
+        message.to_string()
+    } else {
+        format!("[{source}:{command}] {message}")
+    }
 }
 
 fn monitor_process(
@@ -816,7 +825,8 @@ fn monitor_process(
             if let Some(level) = log_level_stdout.as_ref() {
                 progress.log(
                     *level,
-                    format_monitor_log_message("stdout", command, message.as_str()).as_str(),
+                    format_monitor_log_message(*level, "stdout", command, message.as_str())
+                        .as_str(),
                 );
             }
         }
@@ -843,7 +853,8 @@ fn monitor_process(
             if let Some(level) = log_level_stderr.as_ref() {
                 progress.log(
                     *level,
-                    format_monitor_log_message("stdout", command, message.as_str()).as_str(),
+                    format_monitor_log_message(*level, "stdout", command, message.as_str())
+                        .as_str(),
                 );
             }
         }
