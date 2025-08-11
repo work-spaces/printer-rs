@@ -2,7 +2,7 @@ use indicatif::TermLike;
 use std::fmt::Debug;
 use std::io::{Result as IoResult, Write};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct NullTerm;
 
 impl Debug for NullTerm {
