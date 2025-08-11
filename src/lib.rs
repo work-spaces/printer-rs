@@ -287,9 +287,12 @@ impl<'a> MultiProgress<'a> {
         let locker = printer.lock.clone();
         let _lock = locker.lock().unwrap();
 
+        let draw_target =
+            indicatif::ProgressDrawTarget::term_like((printer.create_progress_printer)());
+
         Self {
             printer,
-            multi_progress: indicatif::MultiProgress::new(),
+            multi_progress: indicatif::MultiProgress::with_draw_target(draw_target),
         }
     }
 
@@ -489,6 +492,7 @@ pub struct Printer {
     max_width: usize,
     writer: Box<dyn PrinterTrait>,
     start_time: std::time::Instant,
+    create_progress_printer: fn() -> Box<dyn PrinterTrait>,
 }
 
 impl Printer {
@@ -514,6 +518,7 @@ impl Printer {
             heading_count: 0,
             max_width,
             writer: Box::new(console::Term::stdout()),
+            create_progress_printer: || Box::new(console::Term::stdout()),
             start_time: std::time::Instant::now(),
         }
     }
@@ -527,6 +532,7 @@ impl Printer {
             heading_count: 0,
             max_width: 65535,
             writer: Box::new(file_writer),
+            create_progress_printer: || Box::new(null_term::NullTerm::default()),
             start_time: std::time::Instant::now(),
         })
     }
@@ -538,7 +544,8 @@ impl Printer {
             verbosity: Verbosity::default(),
             heading_count: 0,
             max_width: 80,
-            writer: Box::new(null_term::NullTerm {}),
+            writer: Box::new(null_term::NullTerm::default()),
+            create_progress_printer: || Box::new(null_term::NullTerm::default()),
             start_time: std::time::Instant::now(),
         }
     }
