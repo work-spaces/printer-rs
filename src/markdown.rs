@@ -16,7 +16,7 @@ pub fn hline() -> &'static str {
 pub fn list(items: Vec<Arc<str>>) -> String {
     let mut result = String::new();
     for item in items {
-        result.push_str(format!("- {}\n", item).as_str());
+        result.push_str(format!("- {item}\n").as_str());
     }
     result.push('\n');
     result
@@ -28,7 +28,7 @@ pub fn list_item(level: u8, item: &str) -> String {
 }
 
 pub fn bold(content: &str) -> String {
-    format!("**{}**", content)
+    format!("**{content}**")
 }
 
 pub fn hyperlink(show: &str, link: &str) -> String {
@@ -36,23 +36,23 @@ pub fn hyperlink(show: &str, link: &str) -> String {
 }
 
 pub fn italic(content: &str) -> String {
-    format!("*{}*", content)
+    format!("*{content}*")
 }
 
 pub fn strikethrough(content: &str) -> String {
-    format!("~~{}~~", content)
+    format!("~~{content}~~")
 }
 
 pub fn code(content: &str) -> String {
-    format!("`{}`", content)
+    format!("`{content}`")
 }
 
 pub fn code_block(code_type: &str, content: &str) -> String {
-    format!("```{code_type}\n{}\n```\n", content)
+    format!("```{code_type}\n{content}\n```\n")
 }
 
 pub fn paragraph(content: &str) -> String {
-    format!("{}\n\n", content)
+    format!("{content}\n\n")
 }
 
 impl<'a> Markdown<'a> {

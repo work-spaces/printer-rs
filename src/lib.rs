@@ -532,7 +532,7 @@ impl Printer {
             heading_count: 0,
             max_width: 65535,
             writer: Box::new(file_writer),
-            create_progress_printer: || Box::new(null_term::NullTerm::default()),
+            create_progress_printer: || Box::new(null_term::NullTerm {}),
             start_time: std::time::Instant::now(),
         })
     }
@@ -544,8 +544,8 @@ impl Printer {
             verbosity: Verbosity::default(),
             heading_count: 0,
             max_width: 80,
-            writer: Box::new(null_term::NullTerm::default()),
-            create_progress_printer: || Box::new(null_term::NullTerm::default()),
+            writer: Box::new(null_term::NullTerm {}),
+            create_progress_printer: || Box::new(null_term::NullTerm {}),
             start_time: std::time::Instant::now(),
         }
     }
