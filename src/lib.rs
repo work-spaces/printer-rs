@@ -287,8 +287,10 @@ impl<'a> MultiProgress<'a> {
         let locker = printer.lock.clone();
         let _lock = locker.lock().unwrap();
 
-        let draw_target =
-            indicatif::ProgressDrawTarget::term_like((printer.create_progress_printer)());
+        let draw_target = indicatif::ProgressDrawTarget::term_like_with_hz(
+            (printer.create_progress_printer)(),
+            10,
+        );
 
         Self {
             printer,

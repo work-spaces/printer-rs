@@ -6,13 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
 serde_yaml = "0.9"
 owo-colors = { version = "4.1.0", features = ["supports-colors"] }
-anyhow = "1.0.42"
-indicatif = "0.17.8"
-console = "0.15.8"
+anyhow = "1"
+indicatif = "0.18"
+console = "0.16"
 anyhow-source-location = { git = "https://github.com/work-spaces/anyhow-source-location", rev = "v0.1.0" }
 state = "0.6.0"
 strum = { version = "0.26", features = ["derive"] }
