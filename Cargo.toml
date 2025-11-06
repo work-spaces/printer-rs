@@ -1,7 +1,9 @@
 [package]
 name = "printer"
-version = "0.1.10"
+version = "0.1.12"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/work-spaces/printer-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,7 +15,7 @@ owo-colors = { version = "4.1.0", features = ["supports-colors"] }
 anyhow = "1"
 indicatif = "0.18"
 console = "0.16"
-anyhow-source-location = { git = "https://github.com/work-spaces/anyhow-source-location", rev = "v0.1.0" }
+anyhow-source-location = "0.2.1"
 state = "0.6.0"
 strum = { version = "0.26", features = ["derive"] }
 terminal_size = "0.4.1"
