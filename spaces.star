@@ -21,7 +21,7 @@ run_add_exec_test(
     command = "cargo",
     args = ["--check", "fmt"],
     help = "Run cargo build on workspace",
-    deps = "check",
+    deps = ["check"],
     working_directory = ".",
 )
 
