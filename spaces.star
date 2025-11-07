@@ -12,18 +12,19 @@ load(
 )
 load("//@star/sdk/star/spaces-env.star", "spaces_working_env")
 
-rust_add(
-    "rust_toolchain",
-    version = "1.80",
-)
+if not workspace.is_env_var_set("SPACES_PRINTER_SKIP_SDK_CHECKOUT"):
+    rust_add(
+        "rust_toolchain",
+        version = "1.80",
+    )
 
-buildifier_add(
-    "buildifier",
-    version = "v8.2.1",
-)
+    buildifier_add(
+        "buildifier",
+        version = "v8.2.1",
+    )
 
-starship_add_bash("starship0", shortcuts = {})
-spaces_working_env(add_spaces_to_sysroot = True, inherit_terminal = False)
+    starship_add_bash("starship0", shortcuts = {})
+    spaces_working_env(add_spaces_to_sysroot = True, inherit_terminal = False)
 
 run_add_exec(
     "check",
