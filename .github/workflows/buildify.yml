@@ -1,0 +1,49 @@
+# Sample workflow for building and deploying a Hugo site to GitHub Pages
+name: Deploy Hugo site to Pages
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+  repository-projects: write
+  pull-requests: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+# Default to bash
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Build job
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      repository-projects: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Install Spaces CLI
+        uses: work-spaces/install-spaces@v0.15.5
+
+      - name: Spaces Checkout
+        run: spaces --ci checkout-repo --url=https://github.com/work-spaces/printer-rs --rev=${{ github.head_ref }} --name=${{ github.head_ref }}
+        timeout-minutes: 10
+
+      - name: Spaces Run
+        run: cd ${{ github.head_ref }} && spaces --ci run //:test
+        timeout-minutes: 30
+
