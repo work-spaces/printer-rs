@@ -36,7 +36,7 @@ run_add_exec(
 run_add_exec_test(
     "check_format",
     command = "cargo",
-    args = ["--check", "fmt"],
+    args = ["fmt", "--check"],
     help = "Run cargo build on workspace",
     deps = ["check"],
     working_directory = ".",
