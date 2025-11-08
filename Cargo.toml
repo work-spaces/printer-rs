@@ -1,9 +1,9 @@
 [package]
-name = "printer"
-version = "0.1.12"
+name = "spaces-printer"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/work-spaces/printer-rs"
+repository = "https://github.com/work-spaces/spaces-printer"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,15 +11,15 @@ repository = "https://github.com/work-spaces/printer-rs"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml = "0.9"
-owo-colors = { version = "4.1.0", features = ["supports-colors"] }
+owo-colors = { version = "4.1", features = ["supports-colors"] }
 anyhow = "1"
 indicatif = "0.18"
 console = "0.16"
-anyhow-source-location = "0.2.1"
-state = "0.6.0"
+anyhow-source-location = "0.2"
+state = "0.6"
 strum = { version = "0.26", features = ["derive"] }
-terminal_size = "0.4.1"
+terminal_size = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
-flume = "0.11.0"
+flume = "0.11"
