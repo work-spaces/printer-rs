@@ -1,3 +1,3 @@
-# spaces-printer-rs
+# spaces-printer
 
-`spaces` uses this crate to manage sub-processes and the terminal printer.
+This crate provides the output printer for [spaces](https://github.com/work-spaces/spaces).
