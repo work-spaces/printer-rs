@@ -1,5 +1,4 @@
 use anyhow::Context;
-use anyhow_source_location::{format_context, format_error};
 use indicatif::ProgressStyle;
 use owo_colors::{OwoColorize, Stream::Stdout};
 use serde::{Deserialize, Serialize};
@@ -92,9 +91,7 @@ pub struct Section<'a> {
 
 impl<'a> Section<'a> {
     pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
-        printer
-            .write(format!("{}{}:", " ".repeat(printer.indent), name.bold()).as_str())
-            .context(format_context!(""))?;
+        printer.write(format!("{}{}:", " ".repeat(printer.indent), name.bold()).as_str())?;
         printer.shift_right();
         Ok(Self { printer })
     }
@@ -240,13 +237,13 @@ impl MultiProgressBar {
     ) -> anyhow::Result<std::process::Child> {
         if let Some(directory) = &options.working_directory {
             if !std::path::Path::new(directory.as_ref()).exists() {
-                return Err(format_error!("Directory does not exist: {directory}"));
+                return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
             }
         }
 
-        let child_process = options.spawn(command).context(format_context!(
-            "Failed to spawn a child process using {command}"
-        ))?;
+        let child_process = options
+            .spawn(command)
+            .context(format!("Failed to spawn a child process using {command}"))?;
         Ok(child_process)
     }
 
@@ -258,9 +255,9 @@ impl MultiProgressBar {
         self.set_message(&options.get_full_command(command));
         let child_process = self
             .start_process(command, &options)
-            .context(format_context!("Failed to start process {command}"))?;
-        let result =
-            monitor_process(command, child_process, self, &options).context(format_context!(""))?;
+            .context(format!("Failed to start process {command}"))?;
+        let result = monitor_process(command, child_process, self, &options)
+            .context(format!("{command} failed"))?;
         Ok(result)
     }
 }
@@ -355,7 +352,7 @@ pub struct Heading<'a> {
 
 impl<'a> Heading<'a> {
     pub fn new(printer: &'a mut Printer, name: &str) -> anyhow::Result<Self> {
-        printer.newline().context(format_context!(""))?;
+        printer.newline()?;
         printer.enter_heading();
         {
             let heading = if printer.heading_count == 1 {
@@ -368,10 +365,8 @@ impl<'a> Heading<'a> {
                     .bold()
                     .to_string()
             };
-            printer
-                .write(heading.as_str())
-                .context(format_context!(""))?;
-            printer.write("\n").context(format_context!(""))?;
+            printer.write(heading.as_str())?;
+            printer.write("\n")?;
         }
         Ok(Self { printer })
     }
@@ -457,7 +452,7 @@ impl ExecuteOptions {
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
             .spawn()
-            .context(format_context!("{command}"))?;
+            .context(format!("while spawning piped {command}"))?;
 
         if let Some(callback) = self.process_started_with_id.as_ref() {
             callback(self.label.as_ref(), result.id());
@@ -554,7 +549,7 @@ impl Printer {
 
     pub(crate) fn write(&mut self, message: &str) -> anyhow::Result<()> {
         let _lock = self.lock.lock().unwrap();
-        write!(self.writer, "{message}").context(format_context!(""))?;
+        write!(self.writer, "{message}")?;
         Ok(())
     }
 
@@ -630,13 +625,12 @@ impl Printer {
     }
 
     pub fn code_block(&mut self, name: &str, content: &str) -> anyhow::Result<()> {
-        self.write(format!("```{name}\n{content}```\n").as_str())
-            .context(format_context!(""))?;
+        self.write(format!("```{name}\n{content}```\n").as_str())?;
         Ok(())
     }
 
     fn object<Type: Serialize>(&mut self, name: &str, value: &Type) -> anyhow::Result<()> {
-        let value = serde_json::to_value(value).context(format_context!(""))?;
+        let value = serde_json::to_value(value).context("failed to serialize as JSON")?;
 
         if self.verbosity.level <= Level::Message && value == serde_json::Value::Null {
             return Ok(());
@@ -651,7 +645,7 @@ impl Printer {
             .as_str(),
         )?;
 
-        self.print_value(&value).context(format_context!(""))?;
+        self.print_value(&value)?;
         Ok(())
     }
 
@@ -674,7 +668,7 @@ impl Printer {
     fn print_value(&mut self, value: &serde_json::Value) -> anyhow::Result<()> {
         match value {
             serde_json::Value::Object(map) => {
-                self.write("\n").context(format_context!(""))?;
+                self.write("\n")?;
                 self.shift_right();
                 for (key, value) in map {
                     let is_skip =
@@ -688,37 +682,33 @@ impl Printer {
                                     key.if_supports_color(Stdout, |text| text.bold())
                                 )
                                 .as_str(),
-                            )
-                            .context(format_context!(""))?;
+                            )?;
                         }
-                        self.print_value(value).context(format_context!(""))?;
+                        self.print_value(value)?;
                     }
                 }
                 self.shift_left();
             }
             serde_json::Value::Array(array) => {
-                self.write("\n").context(format_context!(""))?;
+                self.write("\n")?;
                 self.shift_right();
                 for (index, value) in array.iter().enumerate() {
                     self.write(format!("{}[{index}]: ", " ".repeat(self.indent)).as_str())?;
-                    self.print_value(value).context(format_context!(""))?;
+                    self.print_value(value)?;
                 }
                 self.shift_left();
             }
             serde_json::Value::Null => {
-                self.write("null\n").context(format_context!(""))?;
+                self.write("null\n")?;
             }
             serde_json::Value::Bool(value) => {
-                self.write(format!("{value}\n").as_str())
-                    .context(format_context!(""))?;
+                self.write(format!("{value}\n").as_str())?;
             }
             serde_json::Value::Number(value) => {
-                self.write(format!("{value}\n").as_str())
-                    .context(format_context!(""))?;
+                self.write(format!("{value}\n").as_str())?;
             }
             serde_json::Value::String(value) => {
-                self.write(format!("{value}\n").as_str())
-                    .context(format_context!(""))?;
+                self.write(format!("{value}\n").as_str())?;
             }
         }
 
@@ -733,19 +723,17 @@ impl Printer {
         let args = options.arguments.join(" ");
         let full_command = format!("{command} {args}");
 
-        self.info("execute", &full_command)
-            .context(format_context!(""))?;
+        self.info("execute", &full_command)?;
         if let Some(directory) = &options.working_directory {
-            self.info("directory", &directory)
-                .context(format_context!(""))?;
+            self.info("directory", &directory)?;
             if !std::path::Path::new(directory.as_ref()).exists() {
-                return Err(format_error!("Directory does not exist: {directory}"));
+                return Err(anyhow::anyhow!("Directory does not exist: {directory}"));
             }
         }
 
         let child_process = options
             .spawn(command)
-            .context(format_context!("{command}"))?;
+            .context(format!("while spawning {command}"))?;
         Ok(child_process)
     }
 
@@ -754,15 +742,15 @@ impl Printer {
         command: &str,
         options: ExecuteOptions,
     ) -> anyhow::Result<Option<String>> {
-        let section = Section::new(self, command).context(format_context!(""))?;
+        let section = Section::new(self, command)?;
         let child_process = section
             .printer
             .start_process(command, &options)
-            .context(format_context!("Faild to execute process: {command}"))?;
+            .context(format!("Faild to execute process: {command}"))?;
         let mut multi_progress = MultiProgress::new(section.printer);
         let mut progress_bar = multi_progress.add_progress("progress", None, None);
         let result = monitor_process(command, child_process, &mut progress_bar, &options)
-            .context(format_context!(""))?;
+            .context(format!("{command} failed"))?;
 
         Ok(result)
     }
@@ -807,12 +795,12 @@ fn monitor_process(
     let child_stdout = child_process
         .stdout
         .take()
-        .ok_or(format_error!("Internal Error: Child has no stdout"))?;
+        .ok_or(anyhow::anyhow!("Internal Error: Child has no stdout"))?;
 
     let child_stderr = child_process
         .stderr
         .take()
-        .ok_or(format_error!("Internal Error: Child has no stderr"))?;
+        .ok_or(anyhow::anyhow!("Internal Error: Child has no stderr"))?;
 
     let log_level_stdout = options.log_level;
     let log_level_stderr = options.log_level;
@@ -882,7 +870,7 @@ fn monitor_process(
 
     let mut output_file = if let Some(log_path) = options.log_file_path.as_ref() {
         let mut file = std::fs::File::create(log_path.as_ref())
-            .context(format_context!("while creating {log_path}"))?;
+            .context(format!("while creating {log_path}"))?;
 
         let mut environment = HashMap::new();
         const INHERITED: &str = "inherited";
@@ -914,14 +902,13 @@ fn monitor_process(
             shell,
         };
 
-        let log_header_serialized = serde_yaml::to_string(&log_header).context(format_context!(
-            "Internal Error: failed to yamlize log header"
-        ))?;
+        let log_header_serialized = serde_yaml::to_string(&log_header)
+            .context("Internal Error: failed to yamlize log header")?;
 
         let divider = Printer::get_log_divider();
 
         file.write(format!("{log_header_serialized}{divider}\n").as_bytes())
-            .context(format_context!("while writing {log_path}"))?;
+            .context(format!("while writing {log_path}"))?;
 
         Some(file)
     } else {
@@ -941,9 +928,9 @@ fn monitor_process(
         };
 
         handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
-            .context(format_context!("failed to handle stdout"))?;
+            .context("failed to handle stdout")?;
         handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
-            .context(format_context!("failed to handle stderr"))?;
+            .context("failed to handle stderr")?;
         std::thread::sleep(std::time::Duration::from_millis(100));
         progress_bar.increment_with_overflow(1);
 
@@ -951,9 +938,7 @@ fn monitor_process(
 
         if let Some(timeout) = options.timeout {
             if now - start_time > timeout {
-                child_process
-                    .kill()
-                    .context(format_context!("Failed to kill process"))?;
+                child_process.kill().context("Failed to kill process")?;
             }
         }
     }
@@ -969,19 +954,19 @@ fn monitor_process(
         };
 
         handle_stdout(progress_bar, output_file.as_mut(), stdout_content)
-            .context(format_context!("while handling stdout"))?;
+            .context("while handling stdout")?;
     }
 
     handle_stderr(progress_bar, output_file.as_mut(), &mut stderr_content)
-        .context(format_context!("while handling stderr"))?;
+        .context("while handling stderr")?;
 
     if let Some(exit_status) = exit_status {
         if !exit_status.success() {
             if let Some(code) = exit_status.code() {
                 let exit_message = format!("Command failed with exit code: {code}");
-                return Err(format_error!("{exit_message} : {stderr_content}"));
+                return Err(anyhow::anyhow!("{exit_message} : {stderr_content}"));
             } else {
-                return Err(format_error!(
+                return Err(anyhow::anyhow!(
                     "Command failed with unknown exit code: {stderr_content}"
                 ));
             }

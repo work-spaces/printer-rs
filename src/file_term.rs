@@ -1,5 +1,4 @@
 use anyhow::Context;
-use anyhow_source_location::format_context;
 use indicatif::TermLike;
 use std::io::{Result as IoResult, Write};
 
@@ -10,8 +9,7 @@ pub struct FileTerm {
 
 impl FileTerm {
     pub fn new(path: &str) -> anyhow::Result<Self> {
-        let file = std::fs::File::create(path)
-            .context(format_context!("Failed to create file: {}", path))?;
+        let file = std::fs::File::create(path).context(format!("Failed to create file: {path}"))?;
         Ok(Self { file })
     }
 }
