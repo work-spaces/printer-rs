@@ -23,7 +23,8 @@ if not workspace.is_env_var_set("SPACES_PRINTER_SKIP_SDK_CHECKOUT"):
         version = "v8.2.1",
     )
 
-    starship_add_bash("starship0", shortcuts = {})
+    if not info.is_ci():
+        starship_add_bash("starship0", shortcuts = {})
     spaces_working_env(add_spaces_to_sysroot = True, inherit_terminal = False)
 
 run_add_exec(
